@@ -39,7 +39,7 @@ Slurm Operator 讓您可以在 Kubernetes 上部署和管理 Slurm HPC 叢集。
 
 本專案結合了兩種工作負載管理器的優點，統一在 Kubernetes 上。它包含一個 [Kubernetes] Operator，用於部署和管理 [Slurm] 叢集的某些元件。此儲存庫實作了[自訂控制器 (Custom Controllers)][custom-controllers]和[自訂資源定義 (Custom Resource Definitions, CRDs)][crds]，設計用於 Slurm 叢集的生命週期（建立、升級、優雅關閉）。
 
-!["Slurm Operator 架構"](./docs/_static/images/architecture-operator.svg)
+!["Slurm Operator 架構"](../docs/_static/images/architecture-operator.svg)
 
 如需更多架構說明，請參閱[架構][architecture]文件。
 
@@ -47,7 +47,7 @@ Slurm Operator 讓您可以在 Kubernetes 上部署和管理 Slurm HPC 叢集。
 
 Slurm 叢集非常靈活，可以以各種方式配置。我們的 Slurm Helm chart 提供了一個高度可自訂的參考實作，並嘗試公開 Slurm 提供的所有功能。
 
-!["Slurm 架構"](./docs/_static/images/architecture-slurm.svg)
+!["Slurm 架構"](../docs/_static/images/architecture-slurm.svg)
 
 如需更多關於 Slurm 的資訊，請參閱 [Slurm][slurm-docs] 文件。
 

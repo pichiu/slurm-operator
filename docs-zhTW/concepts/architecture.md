@@ -40,7 +40,7 @@ Slinky `slurm-operator` 是一個遵循 Kubernetes Operator 模式的控制器�
 
 下圖從通訊角度說明 Operator (操作器) 的運作方式。
 
-<img src="../_static/images/architecture-operator.svg" alt="Slurm Operator 架構" width="100%" height="auto" />
+<img src="../../docs/_static/images/architecture-operator.svg" alt="Slurm Operator 架構" width="100%" height="auto" />
 
 `slurm-operator` 遵循 Kubernetes [Operator 模式][operator-pattern]。
 
@@ -54,7 +54,7 @@ Slinky `slurm-operator` 是一個遵循 Kubernetes Operator 模式的控制器�
 
 下圖從通訊角度說明容器化 Slurm 叢集 (Cluster) 的架構。
 
-<img src="../_static/images/architecture-slurm.svg" alt="Slurm 叢集架構" width="100%" height="auto" />
+<img src="../../docs/_static/images/architecture-slurm.svg" alt="Slurm 叢集架構" width="100%" height="auto" />
 
 關於 Slurm 的更多資訊，請參閱 [Slurm 文件][slurm]。
 
@@ -62,13 +62,13 @@ Slinky `slurm-operator` 是一個遵循 Kubernetes Operator 模式的控制器�
 
 以下混合式部署圖僅為範例。混合式配置有許多不同的設定方式。核心重點是：slurmd 可以在裸機 (Bare-metal) 上執行，並且仍然可以加入您的容器化 Slurm 叢集；您的 Slurm 叢集所需或想要的外部服務（例如 AD/LDAP、NFS、MariaDB）不必在 Kubernetes 中才能與您的 Slurm 叢集正常運作。
 
-<img src="../_static/images/architecture-slurm-hybrid.svg" alt="混合式 Slurm 叢集架構" width="100%" height="auto" />
+<img src="../../docs/_static/images/architecture-slurm-hybrid.svg" alt="混合式 Slurm 叢集架構" width="100%" height="auto" />
 
 ### 自動擴展
 
 Kubernetes 支援資源自動擴展 (Autoscaling)。在 Slurm 的情境中，當您的 Kubernetes 和 Slurm 叢集有工作負載波動時，自動擴展 Slurm 工作節點 (Workers) 會非常有用。
 
-<img src="../_static/images/architecture-autoscale.svg" alt="自動擴展架構" width="100%" height="auto" />
+<img src="../../docs/_static/images/architecture-autoscale.svg" alt="自動擴展架構" width="100%" height="auto" />
 
 請參閱[自動擴展指南][autoscaling]以獲取更多資訊。
 
