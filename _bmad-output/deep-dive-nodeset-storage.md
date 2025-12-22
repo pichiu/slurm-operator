@@ -720,7 +720,174 @@ kubectl exec -it nodeset-slinky-0 -n slurm -- sinfo -N
 
 ---
 
-## 9. 相關檔案索引
+## 9. Slurm Job 與 Storage 的關係
+
+### 9.1 核心問題：Job 能否動態掛載 Storage？
+
+**答案：否，Slurm Job 無法動態掛載額外的 Storage。**
+
+### 9.2 技術原因
+
+#### Job 的執行本質
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Kubernetes Cluster                        │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │              NodeSet Worker Pod                          │ │
+│  │  ┌─────────────────────────────────────────────────────┐ │ │
+│  │  │           slurmd Container                          │ │ │
+│  │  │  ┌──────────────────────────────────────────────┐   │ │ │
+│  │  │  │    slurmd daemon (PID 1)                     │   │ │ │
+│  │  │  │         │                                    │   │ │ │
+│  │  │  │         ├── Job 1 (child process)            │   │ │ │
+│  │  │  │         ├── Job 2 (child process)            │   │ │ │
+│  │  │  │         └── Job N (child process)            │   │ │ │
+│  │  │  └──────────────────────────────────────────────┘   │ │ │
+│  │  │                                                      │ │ │
+│  │  │  已掛載的 Volumes:                                   │ │ │
+│  │  │    /etc/slurm (slurm-etc)                           │ │ │
+│  │  │    /var/log/slurm (logfile)                         │ │ │
+│  │  │    /scratch (from volumeClaimTemplates)              │ │ │
+│  │  │    /home (NFS - from podSpec.volumes)                │ │ │
+│  │  └─────────────────────────────────────────────────────┘ │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**關鍵理解：**
+
+| 概念 | 說明 |
+|------|------|
+| **Slurm Job** | 是 slurmd daemon 的 **子程序 (child process)**，不是 Kubernetes Pod |
+| **K8s Volume** | 只能在 **Pod 創建時** 掛載，無法動態添加 |
+| **結論** | Job 只能存取 Pod 創建時已掛載的 Volume |
+
+### 9.3 Job 執行流程
+
+```
+用戶提交 Job (sbatch/srun)
+         │
+         ▼
+slurmctld 分配資源，選擇節點 (NodeSet Pod)
+         │
+         ▼
+slurmd (已運行的容器) 接收任務
+         │
+         ▼
+slurmd fork() 子程序執行 Job
+         │
+         ▼
+Job 在容器內執行，繼承容器的 Volume 掛載
+         │
+         ▼
+Job 完成，子程序結束
+```
+
+### 9.4 Job 可存取的 Storage 類型
+
+| Storage 類型 | 配置位置 | 範圍 | 適用場景 |
+|-------------|---------|------|----------|
+| **volumeClaimTemplates** | NodeSet spec | 每 Pod 獨立 | 本地快取、中繼資料 |
+| **NFS (podSpec.volumes)** | NodeSet podSpec | 所有 Pod 共享 | 家目錄、共享資料集 |
+| **hostPath** | NodeSet podSpec | K8s Node 本地 | 存取 GPU Driver、本地 SSD |
+| **emptyDir** | NodeSet podSpec | Pod 生命週期內 | 暫存計算結果 |
+
+### 9.5 實務配置範例
+
+```yaml
+# values.yaml - 為 Job 提供 Storage
+nodesets:
+  gpu:
+    enabled: true
+    replicas: 4
+    slurmd:
+      volumeMounts:
+        - name: scratch       # Per-Pod 高速儲存
+          mountPath: /scratch
+        - name: home          # 共享家目錄
+          mountPath: /home
+        - name: datasets      # 共享資料集
+          mountPath: /datasets
+        - name: output        # 共享輸出目錄
+          mountPath: /output
+    podSpec:
+      volumes:
+        # 共享 NFS
+        - name: home
+          nfs:
+            server: nfs.example.com
+            path: /exports/home
+        - name: datasets
+          nfs:
+            server: nfs.example.com
+            path: /exports/datasets
+        - name: output
+          nfs:
+            server: nfs.example.com
+            path: /exports/output
+    # Per-Pod PVC
+    volumeClaimTemplates:
+      - metadata:
+          name: scratch
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: fast-ssd
+          resources:
+            requests:
+              storage: 500Gi
+```
+
+### 9.6 Pyxis 容器化 Job
+
+使用 Pyxis 時，Job 在獨立容器中執行，但 **storage 仍來自 host Pod**：
+
+```bash
+# 將 Pod 已掛載的 Volume 傳遞給 Job 容器
+srun --container-image=pytorch:latest \
+     --container-mounts=/home:/home,/scratch:/scratch \
+     python train.py
+```
+
+這不是動態掛載新 storage，而是將 **已存在的 Volume** 映射到 Job 容器。
+
+### 9.7 架構限制總結
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     Storage 掛載時機                          │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  NodeSet CR 定義 ─────► Pod 創建時掛載 Volume                  │
+│        │                      │                              │
+│        │                      ▼                              │
+│        │              ┌──────────────────┐                   │
+│        │              │   slurmd 容器    │                   │
+│        ▼              │   (Volume 已固定) │                   │
+│  volumeClaimTemplates │                  │                   │
+│  podSpec.volumes      │   Job 1 ────────►│─── 存取已掛載 Volume│
+│                       │   Job 2 ────────►│─── 存取已掛載 Volume│
+│                       │   Job N ────────►│─── 存取已掛載 Volume│
+│                       └──────────────────┘                   │
+│                                                              │
+│  ✗ Job 無法動態掛載新 Volume                                   │
+│  ✗ Job 無法存取未預先掛載的 Storage                            │
+│  ✓ Job 可使用所有 Pod 創建時已掛載的 Storage                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 9.8 解決方案建議
+
+| 需求 | 解決方案 |
+|------|----------|
+| Job 需要存取共享資料 | 使用 NFS Volume 在 podSpec.volumes 配置 |
+| Job 需要高速本地儲存 | 使用 volumeClaimTemplates 配置 Per-Pod SSD |
+| 不同 Job 需要不同容器環境 | 使用 Pyxis 搭配 container-mounts |
+| Job 需要存取特定資料集 | 預先掛載所有可能需要的資料集路徑 |
+
+---
+
+## 10. 相關檔案索引
 
 | 檔案 | 用途 |
 |------|------|
