@@ -1,0 +1,739 @@
+# NodeSet Storage 深入分析
+
+**生成時間:** 2025-12-22
+**範圍:** `NodeSet` CRD 與 Kubernetes 儲存整合
+**分析檔案數:** 15+
+**相關程式碼行數:** ~3,000
+
+---
+
+## 概覽
+
+本文檔深入分析 NodeSet 中儲存 (Storage) 的實現機制，包括：
+- Worker (slurmd) Pod 如何建立
+- 儲存如何掛載到容器
+- Slurm 與 Kubernetes 儲存的關係
+
+---
+
+## 1. NodeSet Storage 架構總覽
+
+### 1.1 儲存類型對比
+
+| 儲存類型 | 用途 | 生命週期 | 適用場景 |
+|---------|------|---------|---------|
+| `volumeClaimTemplates` | 每個 Pod 專屬的持久化儲存 | 跟隨 Pod 或 NodeSet | 本地工作目錄、暫存資料 |
+| `volumes` (在 `podSpec` 中) | 共享儲存 | 獨立於 Pod | NFS 家目錄、共享資料集 |
+| `emptyDir` | 臨時儲存 | Pod 生命週期 | 日誌、臨時快取 |
+
+### 1.2 關鍵差異：NodeSet vs Controller
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Controller (slurmctld)                       │
+├─────────────────────────────────────────────────────────────────┤
+│  persistence:                                                   │
+│    enabled: true        → StatefulSet VolumeClaimTemplate      │
+│    existingClaim: xxx   → 直接使用現有 PVC                      │
+│    enabled: false       → EmptyDir (資料不持久化)               │
+│                                                                 │
+│  用途: 保存 Slurm 狀態 (save-state)                             │
+│  路徑: /var/spool/slurmctld                                    │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                       NodeSet (slurmd)                          │
+├─────────────────────────────────────────────────────────────────┤
+│  volumeClaimTemplates:  → 每個 Pod 建立獨立 PVC                  │
+│  podSpec.volumes:       → 共享 Volume (如 NFS)                  │
+│                                                                 │
+│  用途: 工作目錄、家目錄掛載                                      │
+│  路徑: 由使用者定義 (如 /home, /scratch)                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Worker Pod 建立流程
+
+### 2.1 完整流程圖
+
+```
+                        使用者建立 NodeSet CR
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                NodeSet Controller (Reconcile)                   │
+│                                                                 │
+│  1. Sync() 函數被觸發                                           │
+│     └── nodeset_sync.go:47                                     │
+│                                                                 │
+│  2. 取得當前 NodeSet Pods                                       │
+│     └── getNodeSetPods()                                       │
+│                                                                 │
+│  3. 比較 replicas 差異                                          │
+│     └── syncNodeSet()                                          │
+│         ├── diff < 0: doPodScaleOut() → 建立新 Pod              │
+│         ├── diff > 0: doPodScaleIn()  → 刪除多餘 Pod            │
+│         └── diff = 0: doPodProcessing() → 維護現有 Pod          │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼ (當需要建立新 Pod)
+┌─────────────────────────────────────────────────────────────────┐
+│                    doPodScaleOut()                              │
+│                    nodeset_sync.go:570                          │
+│                                                                 │
+│  1. 計算要建立的 Pod 數量                                        │
+│  2. 為每個 Pod 分配 ordinal (0, 1, 2, ...)                      │
+│  3. 呼叫 newNodeSetPod() 建構 Pod 規格                          │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    newNodeSetPod()                              │
+│                    nodeset_sync.go:656                          │
+│                                                                 │
+│  1. 取得 Controller 資訊                                        │
+│  2. 呼叫 NewNodeSetPod() 建構 Pod                               │
+│     └── utils/utils.go:33                                      │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    NewNodeSetPod()                              │
+│                    utils/utils.go:33                            │
+│                                                                 │
+│  pod := builder.BuildWorkerPodTemplate(nodeset, controller)     │
+│  pod.Name = GetPodName(nodeset, ordinal)  // e.g., "slinky-0"  │
+│  initIdentity(nodeset, pod)               // 設定 hostname      │
+│  UpdateStorage(nodeset, pod)              // ⭐ 關鍵: 設定 Volume│
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    CreateNodeSetPod()                           │
+│                    podcontrol/podcontrol.go:61                  │
+│                                                                 │
+│  1. createPersistentVolumeClaims()  // ⭐ 先建立 PVCs           │
+│  2. podControl.CreateThisPod()      // 建立 Pod                │
+│  3. UpdatePodPVCsForRetentionPolicy() // 設定 PVC 保留策略      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2 關鍵程式碼解析
+
+#### 2.2.1 UpdateStorage - 設定 Volume 與 VolumeMount 對應
+
+**檔案:** `internal/controller/nodeset/utils/utils.go:89-111`
+
+```go
+// UpdateStorage 將 volumeClaimTemplates 轉換為 Pod 的 Volumes
+func UpdateStorage(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) {
+    currentVolumes := pod.Spec.Volumes
+    claims := GetPersistentVolumeClaims(nodeset, pod)
+    newVolumes := make([]corev1.Volume, 0, len(claims))
+
+    // 為每個 PVC 建立對應的 Volume
+    for name, claim := range claims {
+        newVolumes = append(newVolumes, corev1.Volume{
+            Name: name,  // Volume 名稱 = VolumeClaimTemplate 名稱
+            VolumeSource: corev1.VolumeSource{
+                PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+                    ClaimName: claim.Name,  // PVC 名稱 = "{template}-{nodeset}-{ordinal}"
+                    ReadOnly:  false,
+                },
+            },
+        })
+    }
+
+    // 保留其他非 PVC 的 Volumes (如 NFS)
+    for i := range currentVolumes {
+        if _, ok := claims[currentVolumes[i].Name]; !ok {
+            newVolumes = append(newVolumes, currentVolumes[i])
+        }
+    }
+    pod.Spec.Volumes = newVolumes
+}
+```
+
+#### 2.2.2 GetPersistentVolumeClaims - PVC 名稱生成規則
+
+**檔案:** `internal/controller/nodeset/utils/utils.go:253-270`
+
+```go
+// GetPersistentVolumeClaims 根據 volumeClaimTemplates 生成 PVC 規格
+func GetPersistentVolumeClaims(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) map[string]corev1.PersistentVolumeClaim {
+    ordinal := GetOrdinal(pod)  // 從 pod name 解析 ordinal
+    templates := nodeset.Spec.VolumeClaimTemplates
+    claims := make(map[string]corev1.PersistentVolumeClaim, len(templates))
+
+    for i := range templates {
+        claim := templates[i].DeepCopy()
+        // ⭐ PVC 命名規則: {volumeClaimTemplate.name}-{nodeset.name}-{ordinal}
+        // 例如: data-nodeset-slinky-0, data-nodeset-slinky-1, ...
+        claim.Name = GetPersistentVolumeClaimName(nodeset, claim, ordinal)
+        claim.Namespace = nodeset.Namespace
+        claim.Labels = selectorLabels  // 設定選擇器標籤
+        claims[templates[i].Name] = *claim
+    }
+    return claims
+}
+
+// GetPersistentVolumeClaimName 生成 PVC 名稱
+func GetPersistentVolumeClaimName(nodeset *slinkyv1beta1.NodeSet, claim *corev1.PersistentVolumeClaim, ordinal int) string {
+    return fmt.Sprintf("%s-%s-%d", claim.Name, nodeset.Name, ordinal)
+}
+```
+
+#### 2.2.3 createPersistentVolumeClaims - 實際建立 PVC
+
+**檔案:** `internal/controller/nodeset/podcontrol/podcontrol.go:272-300`
+
+```go
+// createPersistentVolumeClaims 在建立 Pod 前先建立所需的 PVCs
+func (r *realPodControl) createPersistentVolumeClaims(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) error {
+    var errs []error
+    for _, claim := range nodesetutils.GetPersistentVolumeClaims(nodeset, pod) {
+        pvc := &corev1.PersistentVolumeClaim{}
+        err := r.Get(ctx, pvcId, pvc)
+        switch {
+        case apierrors.IsNotFound(err):
+            // PVC 不存在，建立新的
+            if err := r.Create(ctx, &claim); err != nil {
+                errs = append(errs, fmt.Errorf("failed to create PVC %s: %w", claim.Name, err))
+            }
+        case err != nil:
+            errs = append(errs, fmt.Errorf("failed to retrieve PVC %s: %w", claim.Name, err))
+        default:
+            // PVC 已存在，檢查是否正在刪除
+            if pvc.DeletionTimestamp != nil {
+                errs = append(errs, fmt.Errorf("pvc %s is being deleted", claim.Name))
+            }
+        }
+    }
+    return errorutils.NewAggregate(errs)
+}
+```
+
+---
+
+## 3. 儲存掛載機制
+
+### 3.1 基礎 Volume 掛載 (所有 NodeSet Pod 都有)
+
+**檔案:** `internal/builder/worker_app.go:96-168`
+
+```go
+func nodesetVolumes(nodeset *slinkyv1beta1.NodeSet, controller *slinkyv1beta1.Controller) []corev1.Volume {
+    out := []corev1.Volume{
+        // 1. Slurm 配置目錄 (唯讀)
+        {
+            Name: slurmEtcVolume,  // "slurm-etc"
+            VolumeSource: corev1.VolumeSource{
+                Projected: &corev1.ProjectedVolumeSource{
+                    Sources: []corev1.VolumeProjection{
+                        {
+                            Secret: &corev1.SecretProjection{
+                                LocalObjectReference: corev1.LocalObjectReference{
+                                    Name: controller.AuthSlurmRef().Name,
+                                },
+                                Items: []corev1.KeyToPath{
+                                    {Key: "slurm.key", Path: "slurm.key"},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        // 2. 日誌目錄
+        logFileVolume(),  // EmptyDir for /var/log/slurm
+    }
+
+    // 3. SSH 相關 (如果啟用)
+    if nodeset.Spec.Ssh.Enabled {
+        out = append(out, sshConfigVolume, sssdConfVolume)
+    }
+
+    return out
+}
+```
+
+**對應的 VolumeMount:**
+
+```go
+func (b *Builder) slurmdContainer(...) corev1.Container {
+    volumeMounts := []corev1.VolumeMount{
+        {Name: slurmEtcVolume, MountPath: "/etc/slurm", ReadOnly: true},
+        {Name: slurmLogFileVolume, MountPath: "/var/log/slurm"},
+    }
+
+    if nodeset.Spec.Ssh.Enabled {
+        volumeMounts = append(volumeMounts,
+            {Name: sshConfigVolume, MountPath: "/etc/ssh/sshd_config", SubPath: "sshd_config"},
+            {Name: sssdConfVolume, MountPath: "/etc/sssd/sssd.conf", SubPath: "sssd.conf"},
+        )
+    }
+    // ...
+}
+```
+
+### 3.2 使用者自定義 Volume 掛載
+
+在 Helm `values.yaml` 中，使用者可以透過兩種方式添加儲存：
+
+#### 方式 1: volumeClaimTemplates (每個 Pod 獨立 PVC)
+
+```yaml
+nodesets:
+  slinky:
+    enabled: true
+    replicas: 3
+    # 每個 Pod 都會建立獨立的 PVC
+    volumeClaimTemplates:
+      - metadata:
+          name: scratch
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: "local-path"
+          resources:
+            requests:
+              storage: 100Gi
+    slurmd:
+      volumeMounts:
+        - name: scratch
+          mountPath: /scratch
+```
+
+**結果:**
+- 建立 PVC: `scratch-nodeset-slinky-0`, `scratch-nodeset-slinky-1`, `scratch-nodeset-slinky-2`
+- 每個 Pod 掛載自己的 PVC 到 `/scratch`
+
+#### 方式 2: podSpec.volumes (共享儲存)
+
+```yaml
+nodesets:
+  slinky:
+    enabled: true
+    replicas: 3
+    slurmd:
+      volumeMounts:
+        - name: nfs-home
+          mountPath: /home
+        - name: nfs-data
+          mountPath: /data
+    podSpec:
+      volumes:
+        - name: nfs-home
+          nfs:
+            server: nfs-server.example.com
+            path: /exports/home
+        - name: nfs-data
+          nfs:
+            server: nfs-server.example.com
+            path: /exports/data
+```
+
+**結果:**
+- 所有 Pod 共享相同的 NFS 掛載
+- 適用於家目錄、共享資料集
+
+---
+
+## 4. Slurm 與 Kubernetes 儲存的關係
+
+### 4.1 Slurm 需要的儲存
+
+| Slurm 元件 | 儲存需求 | 路徑 | K8s 實現方式 |
+|-----------|---------|------|-------------|
+| slurmctld | 狀態保存 (save-state) | `/var/spool/slurmctld` | Controller persistence (PVC/EmptyDir) |
+| slurmd | 工作目錄 | `/var/spool/slurmd` | EmptyDir (預設) 或自定義 |
+| slurmdbd | 資料庫 | 外部 MariaDB | 不在 K8s 管理範圍 |
+| Job 資料 | 使用者家目錄 | `/home` | NFS 或其他共享儲存 |
+| Job 資料 | 暫存空間 | `/scratch`, `/tmp` | volumeClaimTemplates 或 NFS |
+
+### 4.2 Slurm Job 如何存取儲存
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Slurm Job 執行流程                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+使用者提交 Job: sbatch --partition=slinky job.sh
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  slurmctld (Controller Pod)                                                 │
+│  - 決定在哪個節點執行                                                        │
+│  - 更新 /var/spool/slurmctld (需要 persistence)                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  slurmd (NodeSet Pod, e.g., nodeset-slinky-0)                               │
+│                                                                             │
+│  Volume 掛載:                                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ /etc/slurm (slurm.key)           ← Projected Secret                   │ │
+│  │ /var/log/slurm                   ← EmptyDir                           │ │
+│  │ /home                            ← NFS (共享)                          │ │
+│  │ /scratch                         ← PVC (scratch-nodeset-slinky-0)     │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  Job 執行:                                                                  │
+│  - 讀取 /home/user/job.sh                                                   │
+│  - 寫入結果到 /home/user/results/ 或 /scratch/                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.3 為什麼 NodeSet 需要共享儲存？
+
+1. **家目錄一致性:** 使用者在任何節點登入或執行 Job 都需要看到相同的家目錄
+2. **資料存取:** Job 輸入檔案和輸出結果需要可被存取
+3. **Slurm 工具:** `sbatch`, `squeue`, `srun` 等指令需要存取配置
+
+**典型配置範例:**
+
+```yaml
+nodesets:
+  compute:
+    enabled: true
+    replicas: 10
+    slurmd:
+      volumeMounts:
+        - name: home
+          mountPath: /home
+        - name: data
+          mountPath: /data
+          readOnly: true  # 資料集唯讀
+        - name: scratch
+          mountPath: /scratch
+    podSpec:
+      volumes:
+        - name: home
+          nfs:
+            server: nfs.example.com
+            path: /exports/home
+        - name: data
+          nfs:
+            server: nfs.example.com
+            path: /exports/datasets
+    volumeClaimTemplates:
+      - metadata:
+          name: scratch
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: "local-nvme"
+          resources:
+            requests:
+              storage: 1Ti
+```
+
+---
+
+## 5. PVC 保留策略 (RetentionPolicy)
+
+### 5.1 策略類型
+
+| 策略組合 | whenDeleted | whenScaled | 行為 |
+|---------|-------------|------------|------|
+| 完全保留 | Retain | Retain | PVC 永不自動刪除 |
+| 刪除時清理 | Delete | Retain | NodeSet 刪除時刪除 PVC，縮容時保留 |
+| 縮容時清理 | Retain | Delete | 縮容時刪除 PVC，NodeSet 刪除時保留 |
+| 全部清理 | Delete | Delete | 縮容或刪除都會清理 PVC |
+
+### 5.2 實現機制
+
+**檔案:** `internal/controller/nodeset/podcontrol/podcontrol.go:155-182`
+
+```go
+// PVC OwnerReference 設定策略:
+//
+// Retain/Retain: 無 OwnerRef
+// Delete/Retain: OwnerRef 指向 NodeSet
+// Retain/Delete: OwnerRef 指向 Pod (僅當 Pod 被縮容時)
+// Delete/Delete: OwnerRef 指向 NodeSet 或 Pod
+
+func isClaimOwnerUpToDate(...) bool {
+    policy := getPersistentVolumeClaimRetentionPolicy(nodeset)
+    switch {
+    case policy.WhenDeleted == retain && policy.WhenScaled == retain:
+        // 不應有任何 OwnerRef
+        if hasOwnerRef(claim, nodeset) || hasOwnerRef(claim, pod) {
+            return false
+        }
+    case policy.WhenDeleted == delete && policy.WhenScaled == retain:
+        // 應該只有 NodeSet 的 OwnerRef
+        if !hasOwnerRef(claim, nodeset) || hasOwnerRef(claim, pod) {
+            return false
+        }
+    // ...
+    }
+    return true
+}
+```
+
+### 5.3 Helm 配置方式
+
+```yaml
+nodesets:
+  slinky:
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Delete  # NodeSet 刪除時刪除 PVC
+      whenScaled: Retain   # 縮容時保留 PVC (可重用)
+```
+
+---
+
+## 6. 縮容時的儲存處理
+
+### 6.1 縮容流程
+
+```
+Replicas: 5 → 3 (縮減 2 個)
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  doPodScaleIn()                                                 │
+│  nodeset_sync.go:677                                           │
+│                                                                 │
+│  1. 選擇要刪除的 Pods (通常選擇較高 ordinal)                     │
+│     podsToDelete = [nodeset-slinky-4, nodeset-slinky-3]        │
+│                                                                 │
+│  2. 檢查並更新 PVC 保留策略                                      │
+│     fixPodPVCsFn()                                             │
+│     └── UpdatePodPVCsForRetentionPolicy()                      │
+│                                                                 │
+│  3. Drain Slurm 節點 (等待 Job 完成)                            │
+│     processCondemned()                                         │
+│     └── makePodCordonAndDrain()                                │
+│                                                                 │
+│  4. 等待 Slurm 節點完全 Drain                                   │
+│     IsNodeDrained() == true                                    │
+│                                                                 │
+│  5. 刪除 Pod                                                    │
+│     DeleteNodeSetPod()                                         │
+│                                                                 │
+│  6. 根據策略決定是否刪除 PVC                                     │
+│     └── K8s GC 根據 OwnerReference 自動清理                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 6.2 重要：資料保護機制
+
+```go
+// 縮容時 Slurm 的保護流程:
+// 1. Pod 被標記為 cordon (不再接受新 Job)
+// 2. Slurm node 被設為 DRAIN 狀態
+// 3. 等待現有 Job 完成
+// 4. 確認 Slurm node 完全 DRAINED
+// 5. 才刪除 Pod
+
+func (r *NodeSetReconciler) processCondemned(ctx, nodeset, condemned, i) error {
+    pod := condemned[i]
+
+    // 檢查是否已完全 drain
+    isDrained, err := r.slurmControl.IsNodeDrained(ctx, nodeset, pod)
+    if !isDrained {
+        // 未完成，設定 drain 並等待
+        return r.makePodCordonAndDrain(ctx, nodeset, pod, reason)
+    }
+
+    // 已完全 drain，可以安全刪除
+    return r.podControl.DeleteNodeSetPod(ctx, nodeset, pod)
+}
+```
+
+---
+
+## 7. 實際使用範例
+
+### 7.1 基本設定 (僅共享儲存)
+
+```yaml
+# values.yaml
+nodesets:
+  compute:
+    enabled: true
+    replicas: 4
+    slurmd:
+      image:
+        repository: ghcr.io/slinkyproject/slurmd
+        tag: "25.11"
+      resources:
+        limits:
+          cpu: "16"
+          memory: "64Gi"
+      volumeMounts:
+        - name: home
+          mountPath: /home
+    podSpec:
+      volumes:
+        - name: home
+          nfs:
+            server: nfs.cluster.local
+            path: /exports/home
+```
+
+### 7.2 進階設定 (本地高速暫存 + 共享儲存)
+
+```yaml
+# values.yaml
+nodesets:
+  gpu:
+    enabled: true
+    replicas: 2
+    slurmd:
+      image:
+        repository: ghcr.io/slinkyproject/slurmd
+        tag: "25.11"
+      resources:
+        limits:
+          cpu: "32"
+          memory: "128Gi"
+          nvidia.com/gpu: "4"
+      volumeMounts:
+        - name: home
+          mountPath: /home
+        - name: datasets
+          mountPath: /data
+          readOnly: true
+        - name: local-scratch
+          mountPath: /scratch
+    podSpec:
+      nodeSelector:
+        node-type: gpu
+      volumes:
+        - name: home
+          nfs:
+            server: nfs.cluster.local
+            path: /exports/home
+        - name: datasets
+          nfs:
+            server: nfs.cluster.local
+            path: /exports/datasets
+    # 每個 GPU 節點都有本地 NVMe SSD
+    volumeClaimTemplates:
+      - metadata:
+          name: local-scratch
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: "local-nvme"
+          resources:
+            requests:
+              storage: 2Ti
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Delete
+      whenScaled: Delete  # 暫存資料不需保留
+```
+
+### 7.3 多節點集群 (不同儲存需求)
+
+```yaml
+nodesets:
+  # 高記憶體節點：大量共享儲存
+  highmem:
+    enabled: true
+    replicas: 2
+    slurmd:
+      resources:
+        limits:
+          cpu: "64"
+          memory: "512Gi"
+      volumeMounts:
+        - name: home
+          mountPath: /home
+        - name: bigdata
+          mountPath: /bigdata
+    podSpec:
+      volumes:
+        - name: home
+          nfs:
+            server: nfs.cluster.local
+            path: /exports/home
+        - name: bigdata
+          nfs:
+            server: lustre.cluster.local
+            path: /lustre/bigdata
+
+  # 標準計算節點：本地暫存
+  standard:
+    enabled: true
+    replicas: 20
+    slurmd:
+      resources:
+        limits:
+          cpu: "16"
+          memory: "32Gi"
+      volumeMounts:
+        - name: home
+          mountPath: /home
+        - name: scratch
+          mountPath: /tmp
+    podSpec:
+      volumes:
+        - name: home
+          nfs:
+            server: nfs.cluster.local
+            path: /exports/home
+    volumeClaimTemplates:
+      - metadata:
+          name: scratch
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 100Gi
+```
+
+---
+
+## 8. 故障排除
+
+### 8.1 常見問題
+
+| 問題 | 可能原因 | 解決方法 |
+|------|---------|---------|
+| Pod 卡在 Pending | PVC 無法建立 | 檢查 StorageClass 是否存在、配額是否足夠 |
+| Pod 啟動失敗 | Volume 掛載失敗 | 檢查 NFS 伺服器連線、PVC 是否 Bound |
+| Job 找不到檔案 | 掛載路徑錯誤 | 確認 volumeMounts 路徑正確 |
+| 縮容後資料遺失 | RetentionPolicy 設為 Delete | 如需保留資料，使用 Retain 策略 |
+
+### 8.2 診斷指令
+
+```bash
+# 檢查 NodeSet 狀態
+kubectl get nodesets -n slurm
+
+# 檢查 PVC 狀態
+kubectl get pvc -n slurm -l app.kubernetes.io/component=worker
+
+# 檢查 Pod 的 Volume 掛載
+kubectl describe pod nodeset-slinky-0 -n slurm | grep -A20 "Volumes:"
+
+# 進入 Pod 檢查掛載
+kubectl exec -it nodeset-slinky-0 -n slurm -- df -h
+
+# 檢查 Slurm 節點狀態
+kubectl exec -it nodeset-slinky-0 -n slurm -- sinfo -N
+```
+
+---
+
+## 9. 相關檔案索引
+
+| 檔案 | 用途 |
+|------|------|
+| `api/v1beta1/nodeset_types.go` | NodeSet CRD 定義 (含 volumeClaimTemplates) |
+| `internal/controller/nodeset/nodeset_sync.go` | NodeSet 控制器主邏輯 |
+| `internal/controller/nodeset/podcontrol/podcontrol.go` | Pod 和 PVC 建立邏輯 |
+| `internal/controller/nodeset/utils/utils.go` | PVC 名稱生成、Storage 更新 |
+| `internal/builder/worker_app.go` | Worker Pod 模板建構 |
+| `helm/slurm/templates/nodeset/nodeset-cr.yaml` | Helm 模板 |
+| `helm/slurm/values.yaml` | 預設配置值 |
+
+---
+
+_由 `document-project` 工作流程生成 (deep-dive 模式)_
+_掃描日期: 2025-12-22_
+_專注範圍: NodeSet Storage_
