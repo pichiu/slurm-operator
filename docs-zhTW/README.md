@@ -321,12 +321,12 @@ squeue                          # 查看作業佇列
 
 <!-- links -->
 
-[architecture]: ./docs-zhTW/concepts/architecture.md
+[architecture]: ./concepts/architecture.md
 [cert-manager]: https://cert-manager.io/docs/installation/helm/
 [contact-schedmd]: https://www.schedmd.com/slurm-resources/contact-schedmd/
 [crds]: https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions
 [custom-controllers]: https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#custom-controllers
-[installation]: ./docs-zhTW/installation.md
+[installation]: ./installation.md
 [kubernetes]: https://kubernetes.io/
 [schedmd]: https://schedmd.com/
 [semver]: https://semver.org/
@@ -337,7 +337,7 @@ squeue                          # 查看作業佇列
 [slurm-arch]: https://slurm.schedmd.com/quickstart.html#arch
 [slurm-containers]: https://slurm.schedmd.com/containers.html
 [slurm-dependency]: https://slurm.schedmd.com/sbatch.html#OPT_dependency
-[slurm-docs]: ./docs-zhTW/concepts/slurm.md
+[slurm-docs]: ./concepts/slurm.md
 [slurm-drain]: https://slurm.schedmd.com/scontrol.html#OPT_DRAIN
 [slurm-fairshare]: https://slurm.schedmd.com/fair_tree.html
 [slurm-healthcheck]: https://slurm.schedmd.com/slurm.conf.html#OPT_HealthCheckProgram
@@ -346,4 +346,4 @@ squeue                          # 查看作業佇列
 [slurm-priority]: https://slurm.schedmd.com/priority_multifactor.html
 [slurm-qos]: https://slurm.schedmd.com/qos.html
 [slurm-reservations]: https://slurm.schedmd.com/reservations.html
-[versioning]: ./docs-zhTW/versioning.md
+[versioning]: ./versioning.md
