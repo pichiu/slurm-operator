@@ -18,12 +18,15 @@
   - [3.1 透過 LoginSet (SSH 登入)](#31-透過-loginset-ssh-登入)
   - [3.2 透過 REST API](#32-透過-rest-api)
   - [3.3 透過 JupyterLab](#33-透過-jupyterlab)
-- [4. LDAP 認證配置](#4-ldap-認證配置)
-  - [4.1 認證架構說明](#41-認證架構說明)
-  - [4.2 SSSD 設定步驟](#42-sssd-設定步驟)
-  - [4.3 常見 LDAP Schema 對應](#43-常見-ldap-schema-對應)
-  - [4.4 驗證與除錯](#44-驗證與除錯)
-- [5. 下一步](#5-下一步)
+- [4. Pyxis 容器化作業](#4-pyxis-容器化作業)
+  - [4.1 快速開始](#41-快速開始)
+  - [4.2 常用指令](#42-常用指令)
+- [5. LDAP 認證配置](#5-ldap-認證配置)
+  - [5.1 認證架構說明](#51-認證架構說明)
+  - [5.2 SSSD 設定步驟](#52-sssd-設定步驟)
+  - [5.3 常見 LDAP Schema 對應](#53-常見-ldap-schema-對應)
+  - [5.4 驗證與除錯](#54-驗證與除錯)
+- [6. 下一步](#6-下一步)
 
 ---
 
@@ -323,11 +326,61 @@ kubectl port-forward -n slurm slurm-worker-slinky-0 8081:9999
 
 ---
 
-## 4. LDAP 認證配置
+## 4. Pyxis 容器化作業
+
+**Pyxis** 是 NVIDIA 開發的 Slurm 插件，讓作業可以在容器中執行。這對於需要特定環境（如特定版本的 CUDA、PyTorch）的 ML/AI 工作負載特別有用。
+
+> 深入了解請參考：[Pyxis、NodeSet 與容器化作業深入解析](./deep-dive-pyxis-nodeset.md)
+
+### 4.1 快速開始
+
+**前提條件**：叢集需要啟用 Pyxis 支援（參考 [FAQ - 如何啟用 Pyxis](./slurm-faq.md#pyxis-容器化作業)）
+
+```bash
+# 確認 pyxis partition 存在
+sinfo -p pyxis
+
+# 測試容器執行
+srun --partition=pyxis --container-image=alpine:latest cat /etc/os-release
+```
+
+預期輸出會顯示 **Alpine Linux** 而非 NodeSet 的基礎系統（Rocky Linux）。
+
+### 4.2 常用指令
+
+```bash
+# 基本容器執行
+srun --partition=pyxis \
+     --container-image=ubuntu:22.04 \
+     cat /etc/os-release
+
+# GPU 作業（GPU 自動傳遞到容器）
+srun --partition=pyxis \
+     --gres=gpu:1 \
+     --container-image=nvcr.io/nvidia/pytorch:24.01-py3 \
+     python -c "import torch; print(torch.cuda.is_available())"
+
+# 掛載共享儲存
+srun --partition=pyxis \
+     --container-image=pytorch/pytorch:latest \
+     --container-mounts=/shared/data:/data:ro \
+     python train.py --data-dir=/data
+
+# 批次作業
+sbatch --partition=pyxis \
+       --container-image=myapp:v1 \
+       job.sh
+```
+
+更多使用情境請參考 [Pyxis 深入解析 - 常見使用情境](./deep-dive-pyxis-nodeset.md#6-常見使用情境)。
+
+---
+
+## 5. LDAP 認證配置
 
 如果你的組織使用 LDAP 管理使用者帳號，可以讓 Slurm 叢集直接使用這些帳號。
 
-### 4.1 認證架構說明
+### 5.1 認證架構說明
 
 Slurm Operator 透過 **SSSD (System Security Services Daemon)** 與 LDAP 整合：
 
@@ -342,7 +395,7 @@ flowchart LR
 
 **重點**：LoginSet 和 NodeSet 都需要能夠查詢 LDAP，這樣作業才能以正確的使用者身份執行。
 
-### 4.2 SSSD 設定步驟
+### 5.2 SSSD 設定步驟
 
 #### 方式 A：直接在 values.yaml 設定
 
@@ -443,7 +496,7 @@ loginsets:
       ssh-rsa AAAA... admin-key
 ```
 
-### 4.3 常見 LDAP Schema 對應
+### 5.3 常見 LDAP Schema 對應
 
 不同的 LDAP 伺服器使用不同的 schema，以下是常見的對應設定：
 
@@ -500,7 +553,7 @@ ldap_user_name = sAMAccountName
 ldap_group_object_class = group
 ```
 
-### 4.4 驗證與除錯
+### 5.4 驗證與除錯
 
 #### 驗證 SSSD 設定
 
@@ -542,10 +595,11 @@ ldapsearch -x -H ldap://ldap.mycompany.com \
 
 ---
 
-## 5. 下一步
+## 6. 下一步
 
 恭喜你已經了解 Slurm Operator 的基本使用方式！以下是建議的進階主題：
 
+- **Pyxis 容器化作業**：[深入了解 Pyxis、NodeSet 與容器化作業](./deep-dive-pyxis-nodeset.md)
 - **自動擴縮容**：根據作業負載自動調整節點數量
 - **工作負載隔離**：使用 Kubernetes 的 Namespace 和 ResourceQuota
 - **監控與告警**：整合 Prometheus 和 Grafana

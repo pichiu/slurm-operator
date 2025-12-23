@@ -11,6 +11,7 @@
 - [NodeSet 與 RestApi](#nodeset-與-restapi)
 - [Helm 管理](#helm-管理)
 - [作業提交](#作業提交)
+- [Pyxis 容器化作業](#pyxis-容器化作業)
 - [LDAP 認證](#ldap-認證)
 - [故障排除](#故障排除)
 
@@ -279,6 +280,130 @@ kubectl cp slurm/slurm-worker-slinky-0:/root/output.txt ./output.txt
 #SBATCH --mem=4G           # 記憶體
 #SBATCH --time=01:00:00    # 時間限制
 #SBATCH --gres=gpu:1       # GPU 數量（如果有）
+```
+
+---
+
+## Pyxis 容器化作業
+
+### Q: 什麼是 Pyxis？和 Docker/Kubernetes 容器有什麼不同？
+
+**Pyxis** 是 NVIDIA 開發的 Slurm SPANK 插件，讓 Slurm 作業可以在容器中執行。
+
+| 特性 | Docker/K8s 容器 | Pyxis 容器 |
+|------|----------------|-----------|
+| 管理方式 | dockerd/containerd | enroot |
+| 排程 | K8s scheduler | Slurm scheduler |
+| 生命週期 | Pod 級別 | 作業級別 |
+| 使用情境 | 微服務 | HPC 作業 |
+
+**重點**：NodeSet Pod 本身是 K8s 容器，而 Pyxis 作業是在這個 Pod **內部**再建立 enroot 容器。
+
+詳細說明請參考 [Pyxis 深入解析](./deep-dive-pyxis-nodeset.md)。
+
+### Q: 如何啟用 Pyxis 功能？
+
+需要三個設定：
+
+```yaml
+# 1. plugstack.conf 載入插件
+configFiles:
+  plugstack.conf: |
+    include /usr/share/pyxis/*
+
+# 2. NodeSet 使用 pyxis 映像
+nodesets:
+  - name: pyxis
+    image:
+      repository: ghcr.io/slinkyproject/slurmd-pyxis
+    securityContext:
+      privileged: true
+
+# 3. LoginSet 也使用 pyxis 映像（如果需要）
+loginsets:
+  - name: pyxis
+    image:
+      repository: ghcr.io/slinkyproject/login-pyxis
+    securityContext:
+      privileged: true
+```
+
+### Q: 為什麼 Pyxis NodeSet 需要 privileged 權限？
+
+因為 **enroot** 需要執行以下特權操作：
+
+- 建立 mount namespace
+- 操作 loop devices
+- 修改 cgroups
+
+沒有 `privileged: true`，enroot 無法建立容器。
+
+### Q: Pyxis 作業結束後，容器會怎樣？
+
+**自動銷毀**。Pyxis 容器是短暫的：
+
+1. 作業開始 → enroot 建立容器
+2. 作業執行中 → 容器存在
+3. 作業結束 → 容器自動銷毀
+
+如果需要保留容器除錯，使用 `--container-save` 參數：
+
+```bash
+srun --partition=pyxis \
+     --container-image=myapp:v1 \
+     --container-save=/tmp/debug \
+     ./test.sh
+```
+
+### Q: 如何在 Pyxis 容器中使用 GPU？
+
+只需加上 `--gres=gpu:N` 參數，GPU 會自動傳遞到容器：
+
+```bash
+srun --partition=pyxis \
+     --gres=gpu:2 \
+     --container-image=nvcr.io/nvidia/pytorch:24.01-py3 \
+     python train.py
+```
+
+### Q: 如何掛載共享儲存到 Pyxis 容器？
+
+使用 `--container-mounts` 參數：
+
+```bash
+srun --partition=pyxis \
+     --container-image=pytorch/pytorch:latest \
+     --container-mounts=/nfs/datasets:/data:ro,/nfs/output:/output:rw \
+     python train.py
+```
+
+格式：`host_path:container_path:options`
+
+### Q: Pyxis 映像拉取很慢怎麼辦？
+
+幾個解決方案：
+
+1. **使用持久化快取**：將 enroot 快取掛載到 PVC
+2. **預先拉取映像**：在節點上預先執行 `enroot import`
+3. **使用私有 Registry**：減少網路延遲
+4. **壓縮選項**：使用 lz4 壓縮加快解壓
+
+```yaml
+# 掛載 enroot 快取到 PVC
+nodesets:
+  - name: pyxis
+    volumeClaimTemplates:
+      - metadata:
+          name: enroot-cache
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 100Gi
+    slurmd:
+      volumeMounts:
+        - name: enroot-cache
+          mountPath: /var/cache/enroot
 ```
 
 ---

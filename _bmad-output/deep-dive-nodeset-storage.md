@@ -1,18 +1,19 @@
 # NodeSet Storage 深入分析
 
-**生成時間:** 2025-12-22
-**範圍:** `NodeSet` CRD 與 Kubernetes 儲存整合
-**分析檔案數:** 15+
-**相關程式碼行數:** ~3,000
+> 最後更新：2025-12-23
+> 相關文件：[FAQ](./slurm-faq.md) | [使用指南](./slurm-usage-guide.md) | [Helm 管理指南](./helm-nodeset-guide.md) | [NodeSet API 參考](./nodeset-api-reference.md)
 
 ---
 
 ## 概覽
 
 本文檔深入分析 NodeSet 中儲存 (Storage) 的實現機制，包括：
+
 - Worker (slurmd) Pod 如何建立
 - 儲存如何掛載到容器
 - Slurm 與 Kubernetes 儲存的關係
+
+**目標讀者**：需要了解底層實現的開發者和進階管理員
 
 ---
 
@@ -58,67 +59,53 @@
 
 ### 2.1 完整流程圖
 
+```mermaid
+flowchart TD
+    subgraph User["使用者操作"]
+        A[建立 NodeSet CR]
+    end
+
+    subgraph Controller["NodeSet Controller Reconcile"]
+        B[Sync 函數觸發<br/>nodeset_sync.go:47]
+        C[取得當前 Pods<br/>getNodeSetPods]
+        D{比較 replicas 差異}
+        E[doPodScaleOut<br/>建立新 Pod]
+        F[doPodScaleIn<br/>刪除多餘 Pod]
+        G[doPodProcessing<br/>維護現有 Pod]
+    end
+
+    subgraph ScaleOut["Scale Out 流程"]
+        H[計算要建立的 Pod 數量]
+        I[分配 ordinal 0, 1, 2...]
+        J[newNodeSetPod<br/>nodeset_sync.go:656]
+        K[NewNodeSetPod<br/>utils/utils.go:33]
+        L[UpdateStorage<br/>設定 Volume]
+    end
+
+    subgraph Create["Pod 建立"]
+        M[createPersistentVolumeClaims<br/>先建立 PVCs]
+        N[CreateThisPod<br/>建立 Pod]
+        O[UpdatePodPVCsForRetentionPolicy<br/>設定保留策略]
+    end
+
+    A --> B
+    B --> C --> D
+    D -->|diff < 0| E
+    D -->|diff > 0| F
+    D -->|diff = 0| G
+    E --> H --> I --> J --> K --> L
+    L --> M --> N --> O
 ```
-                        使用者建立 NodeSet CR
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                NodeSet Controller (Reconcile)                   │
-│                                                                 │
-│  1. Sync() 函數被觸發                                           │
-│     └── nodeset_sync.go:47                                     │
-│                                                                 │
-│  2. 取得當前 NodeSet Pods                                       │
-│     └── getNodeSetPods()                                       │
-│                                                                 │
-│  3. 比較 replicas 差異                                          │
-│     └── syncNodeSet()                                          │
-│         ├── diff < 0: doPodScaleOut() → 建立新 Pod              │
-│         ├── diff > 0: doPodScaleIn()  → 刪除多餘 Pod            │
-│         └── diff = 0: doPodProcessing() → 維護現有 Pod          │
-└─────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼ (當需要建立新 Pod)
-┌─────────────────────────────────────────────────────────────────┐
-│                    doPodScaleOut()                              │
-│                    nodeset_sync.go:570                          │
-│                                                                 │
-│  1. 計算要建立的 Pod 數量                                        │
-│  2. 為每個 Pod 分配 ordinal (0, 1, 2, ...)                      │
-│  3. 呼叫 newNodeSetPod() 建構 Pod 規格                          │
-└─────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    newNodeSetPod()                              │
-│                    nodeset_sync.go:656                          │
-│                                                                 │
-│  1. 取得 Controller 資訊                                        │
-│  2. 呼叫 NewNodeSetPod() 建構 Pod                               │
-│     └── utils/utils.go:33                                      │
-└─────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    NewNodeSetPod()                              │
-│                    utils/utils.go:33                            │
-│                                                                 │
-│  pod := builder.BuildWorkerPodTemplate(nodeset, controller)     │
-│  pod.Name = GetPodName(nodeset, ordinal)  // e.g., "slinky-0"  │
-│  initIdentity(nodeset, pod)               // 設定 hostname      │
-│  UpdateStorage(nodeset, pod)              // ⭐ 關鍵: 設定 Volume│
-└─────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    CreateNodeSetPod()                           │
-│                    podcontrol/podcontrol.go:61                  │
-│                                                                 │
-│  1. createPersistentVolumeClaims()  // ⭐ 先建立 PVCs           │
-│  2. podControl.CreateThisPod()      // 建立 Pod                │
-│  3. UpdatePodPVCsForRetentionPolicy() // 設定 PVC 保留策略      │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+**關鍵函數說明：**
+
+| 函數 | 檔案位置 | 說明 |
+|------|----------|------|
+| `Sync()` | `nodeset_sync.go:47` | Reconcile 主入口 |
+| `doPodScaleOut()` | `nodeset_sync.go:570` | 擴容邏輯 |
+| `NewNodeSetPod()` | `utils/utils.go:33` | 建構 Pod 規格 |
+| `UpdateStorage()` | `utils/utils.go:89` | 設定 Volume 對應 |
+| `CreateNodeSetPod()` | `podcontrol/podcontrol.go:61` | 建立 PVC 和 Pod |
 
 ### 2.2 關鍵程式碼解析
 
@@ -354,37 +341,46 @@ nodesets:
 
 ### 4.2 Slurm Job 如何存取儲存
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Slurm Job 執行流程                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph User["使用者"]
+        A["sbatch --partition=slinky job.sh"]
+    end
 
-使用者提交 Job: sbatch --partition=slinky job.sh
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  slurmctld (Controller Pod)                                                 │
-│  - 決定在哪個節點執行                                                        │
-│  - 更新 /var/spool/slurmctld (需要 persistence)                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  slurmd (NodeSet Pod, e.g., nodeset-slinky-0)                               │
-│                                                                             │
-│  Volume 掛載:                                                               │
-│  ┌───────────────────────────────────────────────────────────────────────┐ │
-│  │ /etc/slurm (slurm.key)           ← Projected Secret                   │ │
-│  │ /var/log/slurm                   ← EmptyDir                           │ │
-│  │ /home                            ← NFS (共享)                          │ │
-│  │ /scratch                         ← PVC (scratch-nodeset-slinky-0)     │ │
-│  └───────────────────────────────────────────────────────────────────────┘ │
-│                                                                             │
-│  Job 執行:                                                                  │
-│  - 讀取 /home/user/job.sh                                                   │
-│  - 寫入結果到 /home/user/results/ 或 /scratch/                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+    subgraph CtldPod["Controller Pod"]
+        B["slurmctld<br/>決定執行節點"]
+        C["更新 /var/spool/slurmctld"]
+    end
+
+    subgraph WorkerPod["NodeSet Pod (nodeset-slinky-0)"]
+        D["slurmd 接收任務"]
+
+        subgraph Volumes["Volume 掛載"]
+            V1["/etc/slurm ← Secret"]
+            V2["/var/log/slurm ← EmptyDir"]
+            V3["/home ← NFS 共享"]
+            V4["/scratch ← PVC"]
+        end
+
+        E["Job 執行"]
+        F["讀取 /home/user/job.sh"]
+        G["寫入 /home/user/results/"]
+    end
+
+    A --> B --> C --> D
+    D --> E
+    E --> F --> G
+    Volumes -.-> E
 ```
+
+**Volume 掛載對應：**
+
+| 路徑 | 來源 | 用途 |
+|------|------|------|
+| `/etc/slurm` | Projected Secret | Slurm 認證金鑰 |
+| `/var/log/slurm` | EmptyDir | 日誌（Pod 生命週期） |
+| `/home` | NFS | 共享家目錄 |
+| `/scratch` | PVC | Per-Pod 高速暫存 |
 
 ### 4.3 為什麼 NodeSet 需要共享儲存？
 
@@ -489,35 +485,34 @@ nodesets:
 
 ### 6.1 縮容流程
 
+```mermaid
+flowchart TD
+    A["Replicas: 5 → 3<br/>縮減 2 個"]
+
+    subgraph ScaleIn["doPodScaleIn (nodeset_sync.go:677)"]
+        B["選擇要刪除的 Pods<br/>nodeset-slinky-4, nodeset-slinky-3"]
+        C["更新 PVC 保留策略<br/>UpdatePodPVCsForRetentionPolicy"]
+        D["Drain Slurm 節點<br/>makePodCordonAndDrain"]
+        E{"IsNodeDrained?"}
+        F["刪除 Pod<br/>DeleteNodeSetPod"]
+        G["K8s GC 清理 PVC<br/>根據 OwnerReference"]
+    end
+
+    A --> B --> C --> D --> E
+    E -->|否| D
+    E -->|是| F --> G
 ```
-Replicas: 5 → 3 (縮減 2 個)
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  doPodScaleIn()                                                 │
-│  nodeset_sync.go:677                                           │
-│                                                                 │
-│  1. 選擇要刪除的 Pods (通常選擇較高 ordinal)                     │
-│     podsToDelete = [nodeset-slinky-4, nodeset-slinky-3]        │
-│                                                                 │
-│  2. 檢查並更新 PVC 保留策略                                      │
-│     fixPodPVCsFn()                                             │
-│     └── UpdatePodPVCsForRetentionPolicy()                      │
-│                                                                 │
-│  3. Drain Slurm 節點 (等待 Job 完成)                            │
-│     processCondemned()                                         │
-│     └── makePodCordonAndDrain()                                │
-│                                                                 │
-│  4. 等待 Slurm 節點完全 Drain                                   │
-│     IsNodeDrained() == true                                    │
-│                                                                 │
-│  5. 刪除 Pod                                                    │
-│     DeleteNodeSetPod()                                         │
-│                                                                 │
-│  6. 根據策略決定是否刪除 PVC                                     │
-│     └── K8s GC 根據 OwnerReference 自動清理                     │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+**縮容步驟說明：**
+
+| 步驟 | 函數 | 說明 |
+|------|------|------|
+| 1 | `doPodScaleIn()` | 選擇較高 ordinal 的 Pod |
+| 2 | `fixPodPVCsFn()` | 更新 PVC OwnerReference |
+| 3 | `processCondemned()` | 標記 cordon + drain |
+| 4 | `IsNodeDrained()` | 等待 Job 完成 |
+| 5 | `DeleteNodeSetPod()` | 安全刪除 Pod |
+| 6 | K8s GC | 自動清理 PVC（依策略）|
 
 ### 6.2 重要：資料保護機制
 
@@ -730,30 +725,32 @@ kubectl exec -it nodeset-slinky-0 -n slurm -- sinfo -N
 
 #### Job 的執行本質
 
+```mermaid
+flowchart TB
+    subgraph K8s["Kubernetes Cluster"]
+        subgraph Pod["NodeSet Worker Pod"]
+            subgraph Container["slurmd Container"]
+                Daemon["slurmd daemon<br/>(PID 1)"]
+                Job1["Job 1<br/>child process"]
+                Job2["Job 2<br/>child process"]
+                JobN["Job N<br/>child process"]
+
+                Daemon --> Job1 & Job2 & JobN
+            end
+
+            subgraph Vols["已掛載 Volumes"]
+                V1["/etc/slurm"]
+                V2["/var/log/slurm"]
+                V3["/scratch (PVC)"]
+                V4["/home (NFS)"]
+            end
+        end
+    end
+
+    Vols -.->|"所有 Job 共享"| Container
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                        │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │              NodeSet Worker Pod                          │ │
-│  │  ┌─────────────────────────────────────────────────────┐ │ │
-│  │  │           slurmd Container                          │ │ │
-│  │  │  ┌──────────────────────────────────────────────┐   │ │ │
-│  │  │  │    slurmd daemon (PID 1)                     │   │ │ │
-│  │  │  │         │                                    │   │ │ │
-│  │  │  │         ├── Job 1 (child process)            │   │ │ │
-│  │  │  │         ├── Job 2 (child process)            │   │ │ │
-│  │  │  │         └── Job N (child process)            │   │ │ │
-│  │  │  └──────────────────────────────────────────────┘   │ │ │
-│  │  │                                                      │ │ │
-│  │  │  已掛載的 Volumes:                                   │ │ │
-│  │  │    /etc/slurm (slurm-etc)                           │ │ │
-│  │  │    /var/log/slurm (logfile)                         │ │ │
-│  │  │    /scratch (from volumeClaimTemplates)              │ │ │
-│  │  │    /home (NFS - from podSpec.volumes)                │ │ │
-│  │  └─────────────────────────────────────────────────────┘ │ │
-│  └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
+
+**層次結構**：K8s Cluster → Pod → Container → slurmd daemon → Job (child process)
 
 **關鍵理解：**
 
@@ -765,24 +762,19 @@ kubectl exec -it nodeset-slinky-0 -n slurm -- sinfo -N
 
 ### 9.3 Job 執行流程
 
+```mermaid
+flowchart TD
+    A["用戶提交 Job<br/>sbatch/srun"] --> B["slurmctld 分配資源<br/>選擇 NodeSet Pod"]
+    B --> C["slurmd 接收任務<br/>已運行的容器"]
+    C --> D["slurmd fork<br/>子程序"]
+    D --> E["Job 執行<br/>繼承容器的 Volume"]
+    E --> F["Job 完成<br/>子程序結束"]
+
+    style D fill:#f9f,stroke:#333
+    style E fill:#bbf,stroke:#333
 ```
-用戶提交 Job (sbatch/srun)
-         │
-         ▼
-slurmctld 分配資源，選擇節點 (NodeSet Pod)
-         │
-         ▼
-slurmd (已運行的容器) 接收任務
-         │
-         ▼
-slurmd fork() 子程序執行 Job
-         │
-         ▼
-Job 在容器內執行，繼承容器的 Volume 掛載
-         │
-         ▼
-Job 完成，子程序結束
-```
+
+**重點**：Job 是 slurmd 的子程序，自動繼承容器已掛載的所有 Volume。
 
 ### 9.4 Job 可存取的 Storage 類型
 
@@ -853,28 +845,37 @@ srun --container-image=pytorch:latest \
 
 ### 9.7 架構限制總結
 
+```mermaid
+flowchart LR
+    subgraph Definition["NodeSet CR 定義"]
+        A["volumeClaimTemplates"]
+        B["podSpec.volumes"]
+    end
+
+    subgraph PodCreation["Pod 創建時"]
+        C["掛載 Volume"]
+    end
+
+    subgraph Runtime["運行時"]
+        D["slurmd 容器<br/>Volume 已固定"]
+        E["Job 1"]
+        F["Job 2"]
+        G["Job N"]
+    end
+
+    A --> C
+    B --> C
+    C --> D
+    D --> E & F & G
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     Storage 掛載時機                          │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  NodeSet CR 定義 ─────► Pod 創建時掛載 Volume                  │
-│        │                      │                              │
-│        │                      ▼                              │
-│        │              ┌──────────────────┐                   │
-│        │              │   slurmd 容器    │                   │
-│        ▼              │   (Volume 已固定) │                   │
-│  volumeClaimTemplates │                  │                   │
-│  podSpec.volumes      │   Job 1 ────────►│─── 存取已掛載 Volume│
-│                       │   Job 2 ────────►│─── 存取已掛載 Volume│
-│                       │   Job N ────────►│─── 存取已掛載 Volume│
-│                       └──────────────────┘                   │
-│                                                              │
-│  ✗ Job 無法動態掛載新 Volume                                   │
-│  ✗ Job 無法存取未預先掛載的 Storage                            │
-│  ✓ Job 可使用所有 Pod 創建時已掛載的 Storage                    │
-└──────────────────────────────────────────────────────────────┘
-```
+
+**限制摘要：**
+
+| 狀態 | 說明 |
+|------|------|
+| ❌ | Job 無法動態掛載新 Volume |
+| ❌ | Job 無法存取未預先掛載的 Storage |
+| ✅ | Job 可使用所有 Pod 創建時已掛載的 Storage |
 
 ### 9.8 解決方案建議
 
@@ -901,6 +902,5 @@ srun --container-image=pytorch:latest \
 
 ---
 
-_由 `document-project` 工作流程生成 (deep-dive 模式)_
-_掃描日期: 2025-12-22_
-_專注範圍: NodeSet Storage_
+> 原始生成：2025-12-22（document-project deep-dive 模式）
+> 最後改寫：2025-12-23（新增 Mermaid 圖表、交叉連結）
