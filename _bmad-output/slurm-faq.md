@@ -1,6 +1,6 @@
 # Slurm Operator 常見問題 (FAQ)
 
-> 最後更新：2025-12-22
+> 最後更新：2025-12-23
 > 相關文件：[Slurm Operator 使用指南](./slurm-usage-guide.md)
 
 ---
@@ -54,6 +54,76 @@ accounting:     # 如果需要記帳功能
 
 ## NodeSet 與 RestApi
 
+### Q: 如何建立 NodeSet worker Pod？
+
+Worker Pod 是透過建立 **NodeSet CR** 自動產生的，你不需要手動建立 Pod。
+
+**方式 1：透過 Helm Chart（推薦）**
+
+```yaml
+# values.yaml
+nodesets:
+  compute:                   # NodeSet 名稱
+    enabled: true
+    replicas: 3              # 建立 3 個 worker Pod
+    slurmd:
+      image:
+        repository: ghcr.io/slinkyproject/slurmd
+        tag: 25.05-rockylinux9
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+    partition:
+      enabled: true
+```
+
+```bash
+helm upgrade --install slurm oci://ghcr.io/slinkyproject/charts/slurm \
+  -f values.yaml -n slurm
+```
+
+**方式 2：直接建立 NodeSet CR**
+
+```yaml
+# nodeset.yaml
+apiVersion: slinky.slurm.net/v1beta1
+kind: NodeSet
+metadata:
+  name: compute
+  namespace: slurm
+spec:
+  controllerRef:
+    name: slinky
+    namespace: slurm
+  replicas: 3
+  slurmd:
+    image: ghcr.io/slinkyproject/slurmd:25.05-rockylinux9
+  partition:
+    enabled: true
+```
+
+```bash
+kubectl apply -f nodeset.yaml
+```
+
+**驗證**：
+
+```bash
+kubectl get nodeset -n slurm
+kubectl get pods -n slurm -l slinky.slurm.net/component=slurmd
+```
+
+### Q: 如何擴縮容 NodeSet？
+
+```bash
+# 增加到 5 個 worker
+kubectl scale nodeset/compute --replicas=5 -n slurm
+
+# 或修改 CR
+kubectl patch nodeset compute -n slurm --type=merge -p '{"spec":{"replicas":5}}'
+```
+
 ### Q: NodeSet 可以透過 REST API 建立嗎？
 
 **不行**。這是最常見的誤解。
@@ -61,11 +131,7 @@ accounting:     # 如果需要記帳功能
 - **NodeSet CR** 建立 Kubernetes Pod（基礎設施）
 - **REST API** 只能操作已存在的 Slurm 節點（邏輯控制）
 
-要增加節點，必須修改 NodeSet 的 `replicas`：
-
-```bash
-kubectl scale nodeset/slinky --replicas=5 -n slurm
-```
+要增加節點，必須修改 NodeSet 的 `replicas`（參考上面的擴縮容方式）。
 
 ### Q: 為什麼縮容時節點不會立刻被刪除？
 
