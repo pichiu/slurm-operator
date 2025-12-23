@@ -1,8 +1,9 @@
 # Slurm Operator 使用指南
 
-> 最後更新：2025-12-22
+> 最後更新：2025-12-23
 > 適用版本：slurm-operator v1.x
 > 目標讀者：Kubernetes 與 HPC 新手
+> 相關文件：[FAQ](./slurm-faq.md) | [NodeSet API 參考](./nodeset-api-reference.md)
 
 ---
 

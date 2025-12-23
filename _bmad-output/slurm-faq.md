@@ -1,7 +1,7 @@
 # Slurm Operator 常見問題 (FAQ)
 
 > 最後更新：2025-12-23
-> 相關文件：[Slurm Operator 使用指南](./slurm-usage-guide.md)
+> 相關文件：[使用指南](./slurm-usage-guide.md) | [NodeSet API 參考](./nodeset-api-reference.md)
 
 ---
 
