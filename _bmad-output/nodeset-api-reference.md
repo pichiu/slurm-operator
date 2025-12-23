@@ -2,7 +2,7 @@
 
 > 最後更新：2025-12-23
 > API 版本：`slinky.slurm.net/v1beta1`
-> 相關文件：[Slurm Operator 使用指南](./slurm-usage-guide.md) | [FAQ](./slurm-faq.md)
+> 相關文件：[使用指南](./slurm-usage-guide.md) | [FAQ](./slurm-faq.md) | [Helm 管理指南](./helm-nodeset-guide.md)
 
 ---
 

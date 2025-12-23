@@ -1,7 +1,7 @@
 # Slurm Operator 常見問題 (FAQ)
 
 > 最後更新：2025-12-23
-> 相關文件：[使用指南](./slurm-usage-guide.md) | [NodeSet API 參考](./nodeset-api-reference.md)
+> 相關文件：[使用指南](./slurm-usage-guide.md) | [NodeSet API 參考](./nodeset-api-reference.md) | [Helm NodeSet 管理指南](./helm-nodeset-guide.md)
 
 ---
 
@@ -9,6 +9,7 @@
 
 - [基本概念](#基本概念)
 - [NodeSet 與 RestApi](#nodeset-與-restapi)
+- [Helm 管理](#helm-管理)
 - [作業提交](#作業提交)
 - [LDAP 認證](#ldap-認證)
 - [故障排除](#故障排除)
@@ -169,6 +170,75 @@ status:
   slurmDown: 0          # Slurm Down 節點
   slurmDrain: 0         # Slurm Drain 節點
 ```
+
+---
+
+## Helm 管理
+
+### Q: 如何確認 NodeSet 是由 Helm 還是手動建立的？
+
+檢查資源的 labels 和 annotations：
+
+```bash
+kubectl get nodeset <name> -n slurm -o yaml | grep -A5 "labels:"
+```
+
+**Helm 建立的資源會有：**
+
+```yaml
+labels:
+  app.kubernetes.io/managed-by: Helm
+annotations:
+  meta.helm.sh/release-name: slurm
+  meta.helm.sh/release-namespace: slurm
+```
+
+如果沒有這些標籤，就是手動建立的 CR。
+
+### Q: 使用 Helm 管理 NodeSet 有什麼好處？
+
+| 優點 | 說明 |
+|------|------|
+| 統一管理 | 所有元件在同一個 values.yaml |
+| 版本控制 | `helm history` 查看歷史，`helm rollback` 回滾 |
+| 升級簡單 | `helm upgrade` 一個指令升級整個叢集 |
+| 設定驗證 | Chart 內建 schema 減少設定錯誤 |
+| 相依性處理 | 自動處理元件間的相依關係 |
+
+### Q: 直接建立 CR 有什麼壞處？
+
+| 缺點 | 說明 |
+|------|------|
+| 設定分散 | 每個 CR 一個 YAML，難以追蹤 |
+| 無法整體回滾 | 沒有簡單方法回到之前的狀態 |
+| Helm 衝突 | 混用時 `helm upgrade` 可能覆蓋手動變更 |
+| 升級複雜 | 需要手動逐一更新每個 CR |
+
+### Q: 如何將手動建立的 CR 轉成 Helm 管理？
+
+**零停機方式**（推薦）：
+
+```bash
+# 1. 備份現有 CR
+kubectl get nodeset compute -n slurm -o yaml > nodeset-backup.yaml
+
+# 2. 加上 Helm 管理標籤
+kubectl label nodeset compute -n slurm \
+  app.kubernetes.io/managed-by=Helm
+
+kubectl annotate nodeset compute -n slurm \
+  meta.helm.sh/release-name=slurm \
+  meta.helm.sh/release-namespace=slurm
+
+# 3. 準備對應的 values.yaml（設定要和現有 CR 一致）
+# 4. 執行 helm upgrade
+helm upgrade slurm oci://ghcr.io/slinkyproject/charts/slurm \
+  -f values.yaml -n slurm --install
+```
+
+**注意**：values.yaml 的設定必須和現有 CR 完全一致，否則會被覆蓋。
+
+詳細操作請參考 [Helm NodeSet 管理指南](./helm-nodeset-guide.md)。
 
 ---
 

@@ -37,6 +37,15 @@
 | [開發指南](./development-guide.md) | 環境設定、構建命令、測試 |
 | [資料模型](./data-models.md) | CRD 定義、欄位說明、驗證規則 |
 
+### 使用者文件
+
+| 文件 | 說明 |
+|------|------|
+| [使用指南](./slurm-usage-guide.md) | 新手入門、基本操作、作業提交 |
+| [FAQ](./slurm-faq.md) | 常見問題與解答 |
+| [NodeSet API 參考](./nodeset-api-reference.md) | NodeSet CR 完整欄位說明 |
+| [Helm NodeSet 管理指南](./helm-nodeset-guide.md) | Helm 管理 NodeSet 的操作指南 |
+
 ---
 
 ## 現有專案文件
