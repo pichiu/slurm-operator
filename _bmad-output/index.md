@@ -45,6 +45,7 @@
 | [FAQ](./slurm-faq.md) | 常見問題與解答 |
 | [NodeSet API 參考](./nodeset-api-reference.md) | NodeSet CR 完整欄位說明 |
 | [Helm NodeSet 管理指南](./helm-nodeset-guide.md) | Helm 管理 NodeSet 的操作指南 |
+| [AAA 職責邊界說明](./aaa-responsibilities.md) | Authentication/Accounting 責任邊界與 Bootstrap 指南 |
 
 ### 深入解析
 
