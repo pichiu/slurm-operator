@@ -243,7 +243,11 @@ flowchart TB
 | `auth/slurm` | `slurm.key` | Slurm daemon 間通訊 | `slurmKeyRef` |
 | `auth/jwt` | `jwt_hs256.key` | REST API、Token 生成 | `jwtHs256KeyRef` |
 
-> **重要**: 部署後這兩個金鑰參考 **不可變更**。如需更換金鑰，必須重新部署整個叢集。
+> **⚠️ 重要警告：金鑰不可變更**
+>
+> 叢集初始化後，`slurmKeyRef` 和 `jwtHs256KeyRef` 的參照 **絕對不可變更**。
+>
+> 變更金鑰等同於更換整個大樓的門鎖系統，會導致所有內部元件（slurmd, slurmctld）和外部 API 無法通過認證，造成叢集完全失聯。如果確實需要輪替金鑰，必須規劃完整的停機維護，並手動同步金鑰到所有節點（特別是 Hybrid 模式），然後重啟整個 Slurm 叢集。這是一個高風險操作，應謹慎為之。
 
 ### 5.2 認證流程
 
@@ -495,7 +499,7 @@ sacctmgr show cluster
 #### 步驟 3：建立根帳戶
 
 ```bash
-# 建立組織根帳戶
+# 建立組織根帳戶 (注意：此處的 'root' 僅為一個帳戶名稱標籤，與 Linux 的 root 使用者無關)
 sacctmgr add account root description="Root account"
 
 # 建立部門/專案帳戶（範例）
@@ -510,11 +514,20 @@ sacctmgr show account tree
 
 ```bash
 # 建立使用者並指派 Admin 權限
-# 注意：使用者名稱必須與 LDAP/SSSD 解析的名稱完全一致
+# 注意：
+# 1. 使用者名稱 (如 'admin') 必須與 LDAP/SSSD 解析的名稱完全一致。
+# 2. 此處的 'admin' 使用者是 Slurm Accounting 內的管理員，不代表他是 Linux 系統的 root。
 sacctmgr add user admin account=root adminlevel=admin
 
 # 驗證
 sacctmgr show user admin withassoc
+```
+
+#### 步驟 4.1 (建議)：註冊 Slurm 系統使用者
+```bash
+# 將 slurm 守護程序本身所使用的系統使用者 'slurm' 也加入到 root 帳戶中。
+# 這有助於避免內部程序查詢權限時產生不必要的錯誤或警告。
+sacctmgr add user slurm account=root
 ```
 
 #### 步驟 5：建立一般使用者
@@ -724,6 +737,20 @@ scp slurm.key jwt_hs256.key external-node:/etc/slurm/
 # 設定權限
 ssh external-node 'chmod 600 /etc/slurm/*.key && chown slurm:slurm /etc/slurm/*.key'
 ```
+
+### 組態檔同步要求
+
+除了金鑰，外部節點的 `/etc/slurm/slurm.conf` 也必須與 slurm-operator 自動生成的 `slurm.conf` 保持一致。最簡單的方法是直接從 Controller Pod 中複製該檔案。
+
+```bash
+# 從 Controller Pod 複製 slurm.conf
+CONTROLLER_POD=$(kubectl get pods -l app.kubernetes.io/component=slurmctld -n slurm -o jsonpath='{.items[0].metadata.name}')
+kubectl cp -n slurm ${CONTROLLER_POD}:/etc/slurm/slurm.conf ./slurm.conf
+
+# 複製到外部節點
+scp ./slurm.conf external-node:/etc/slurm/
+```
+> **注意**：如果外部節點的網路環境與 K8s Pod 網路不同，可能需要手動修改 `slurm.conf` 中的 `SlurmctldHost` 等參數以確保可路由。
 
 ### 外部節點 SSSD 配置
 
