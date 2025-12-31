@@ -44,6 +44,7 @@
 | [使用指南](./slurm-usage-guide.md) | 新手入門、基本操作、作業提交 |
 | [FAQ](./slurm-faq.md) | 常見問題與解答 |
 | [slurm.conf 配置指南](./slurm-conf-guide.md) | slurm.conf 生成機制、extraConf 配置、Partition 設定 |
+| [REST API 指南](./rest-api.md) | Slurm REST API 使用指南、JWT 認證、端點說明 |
 | [NodeSet API 參考](./nodeset-api-reference.md) | NodeSet CR 完整欄位說明 |
 | [Helm NodeSet 管理指南](./helm-nodeset-guide.md) | Helm 管理 NodeSet 的操作指南 |
 | [AAA 職責邊界說明](./aaa-responsibilities.md) | Authentication/Accounting 責任邊界與 Bootstrap 指南 |
@@ -52,6 +53,7 @@
 
 | 文件 | 說明 |
 |------|------|
+| [Partition 管理深入解析](./deep-dive-partition.md) | Partition CRUD 限制、REST API 分析、管理方案評估 |
 | [Pyxis 與 NodeSet 深入解析](./deep-dive-pyxis-nodeset.md) | Pyxis 容器化作業、三層架構、Enroot 設定 |
 | [Helm Chart 深入解析](./deep-dive-helm.md) | Helm Chart 結構與客製化 |
 | [NodeSet 儲存深入解析](./deep-dive-nodeset-storage.md) | NodeSet 儲存配置詳解 |
