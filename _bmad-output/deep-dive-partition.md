@@ -14,6 +14,7 @@
 - [優缺點分析](#優缺點分析)
 - [可能遇到的問題](#可能遇到的問題)
 - [Best Practices](#best-practices)
+- [Upstream 社群現況分析](#upstream-社群現況分析)
 - [結論與建議](#結論與建議)
 
 ---
@@ -699,6 +700,89 @@ flowchart TD
     style A fill:#e3f2fd
     style E fill:#e8f5e9
 ```
+
+---
+
+## Upstream 社群現況分析
+
+> 調查日期：2025-12-31 | 來源：[SlinkyProject/slurm-operator](https://github.com/SlinkyProject/slurm-operator)
+
+### 調查目的
+
+確認 upstream slurm-operator 專案是否有動態 Partition 管理的相關計畫，包括：
+- 獨立的 Partition CRD
+- Partition CRUD 功能請求
+- Roadmap 規劃
+
+### 調查結果
+
+#### 相關 Issue/PR
+
+| 類型 | 編號 | 標題 | 狀態 | 相關性 |
+|------|------|------|------|--------|
+| PR | [#56](https://github.com/SlinkyProject/slurm-operator/pull/56) | Fix nodeset partition reference | Closed | 修復 `partition.enabled` 被忽略的 bug |
+
+**關鍵發現**：
+- 沒有任何 Issue 討論獨立的 Partition CRD
+- 沒有動態 Partition 管理的功能請求
+- Discussions 功能已停用
+- 沒有公開的 ROADMAP.md 文件
+
+#### 現有 Partition 架構
+
+slurm-operator 將 Partition 作為 NodeSet 的子結構，而非獨立 CRD：
+
+```go
+// 位置：api/v1beta1/nodeset_types.go
+type NodeSetPartition struct {
+    // Enabled will create a partition for this NodeSet.
+    Enabled bool   `json:"enabled"`
+
+    // Config is added to the NodeSet's partition line.
+    Config  string `json:"config,omitzero"`
+}
+```
+
+這個設計表明：
+1. Partition 被視為 NodeSet 的附屬配置
+2. 不支援跨 NodeSet 的複雜 Partition 拓撲（需透過 Helm `partitions` 區塊處理）
+3. 沒有 Partition 生命週期的獨立管理
+
+#### CHANGELOG 記錄
+
+v0.4 和 v1.0 版本都有 partition 相關的修復：
+
+- 修復 `partition.enabled` 設定被忽略的迴歸問題
+- 修復 per-nodeset partition 建立邏輯
+
+這些都是 bug 修復，而非新功能開發。
+
+### 結論
+
+**動態 Partition 管理目前不在 upstream 規劃內**
+
+| 面向 | 狀態 |
+|------|------|
+| 獨立 Partition CRD | ❌ 不存在，無規劃 |
+| Partition CRUD API | ❌ 不存在，無規劃 |
+| 社群需求 | 無相關 Issue/Discussion |
+| 設計方向 | 靜態配置生成（slurm.conf） |
+
+### 可能的行動方案
+
+如果需要此功能：
+
+1. **向 upstream 提交 Feature Request**
+   - 在 [SlinkyProject/slurm-operator](https://github.com/SlinkyProject/slurm-operator/issues) 開 Issue
+   - 說明用例和預期行為
+
+2. **在 fork 中自行實作**
+   - 參考本文件「動態 Partition 管理方案評估」的「方案四」
+   - 建立 SlurmPartition CRD 和對應 Controller
+
+3. **使用現有機制**
+   - 透過 Helm `partitions` 區塊管理複雜配置
+   - 搭配 GitOps 工作流程實現宣告式管理
 
 ---
 
