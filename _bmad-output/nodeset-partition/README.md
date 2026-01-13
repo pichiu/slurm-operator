@@ -55,6 +55,7 @@ flowchart LR
 | 文件 | 說明 | 適合讀者 |
 |------|------|---------|
 | [Partition 基礎](./concepts/partition-fundamentals.md) | Partition 是什麼？與 NodeSet 的關係 | 新手入門 |
+| [Operator vs 原生 Slurm](./concepts/operator-vs-native-slurm.md) | 架構差異、設計權衡、侷限與變通方案 | 架構師、進階使用者 |
 
 ### 架構深入
 
