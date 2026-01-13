@@ -4,33 +4,16 @@
 package e2e
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"testing"
-	"time"
 
-	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
-	"sigs.k8s.io/e2e-framework/klient"
-	"sigs.k8s.io/e2e-framework/klient/k8s"
-	"sigs.k8s.io/e2e-framework/klient/wait"
-	"sigs.k8s.io/e2e-framework/klient/wait/conditions"
+	"helm.sh/helm/v3/pkg/action"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/envfuncs"
-	"sigs.k8s.io/e2e-framework/pkg/features"
+	"sigs.k8s.io/e2e-framework/pkg/types"
 	"sigs.k8s.io/e2e-framework/support/kind"
-	"sigs.k8s.io/e2e-framework/third_party/helm"
-
-	"helm.sh/helm/v3/pkg/action"
-
-	// mariadb "github.com/mariadb-operator/mariadb-operator/api/v1alpha1"
-
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 var (
@@ -73,6 +56,7 @@ func TestMain(m *testing.M) {
 		envfuncs.CreateNamespace("slurm"),
 		envfuncs.CreateNamespace("cert-manager"),
 		envfuncs.CreateNamespace("mariadb"),
+		envfuncs.CreateNamespace("prometheus"),
 	)
 
 	// Use pre-defined environment funcs to teardown kind cluster after tests
@@ -81,6 +65,7 @@ func TestMain(m *testing.M) {
 		envfuncs.DeleteNamespace("slurm"),
 		envfuncs.DeleteNamespace("cert-manager"),
 		envfuncs.DeleteNamespace("mariadb"),
+		envfuncs.DeleteNamespace("prometheus"),
 		envfuncs.DestroyCluster(kindClusterName),
 	)
 
@@ -88,603 +73,91 @@ func TestMain(m *testing.M) {
 	os.Exit(testenv.Run(m))
 }
 
-func TestHelmInstallation(t *testing.T) {
+func TestInstallation(t *testing.T) {
 	const slinkyNamespace = "slinky"
 	const slurmNamespace = "slurm"
 
-	installCertMgr := features.New("Helm install cert-manager").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
+	tests := []struct {
+		name  string
+		steps []types.Feature
+	}{
+		{
+			name: "Install slurm-operator",
+			steps: []types.Feature{
+				installCertMgr(),
+				installSlurmOperatorCRDS(slinkyNamespace),
+				installSlurmOperator(testUID, slinkyNamespace),
+			},
+		},
+		{
+			name: "Install Slurm",
+			steps: []types.Feature{
+				installSlurm(slurmNamespace, false, false, false, false),
+				testSlurmController(slurmNamespace),
+				testSlurmNodeSet(slurmNamespace),
+				uninstallSlurm(slurmNamespace),
+			},
+		},
+		{
+			name: "Install Slurm with login",
+			steps: []types.Feature{
+				installSlurm(slurmNamespace, false, true, false, false),
+				testSlurmController(slurmNamespace),
+				testSlurmNodeSet(slurmNamespace),
+				uninstallSlurm(slurmNamespace),
+			},
+		},
+		{
+			name: "Install Slurm with metrics",
+			steps: []types.Feature{
+				installPrometheus(),
+				installSlurm(slurmNamespace, false, false, true, false),
+				testSlurmController(slurmNamespace),
+				testSlurmNodeSet(slurmNamespace),
+				uninstallSlurm(slurmNamespace),
+			},
+		},
+		{
+			name: "Install Slurm with accounting",
+			steps: []types.Feature{
+				installMariadbOperator(),
+				applyMariaDBYaml(slurmNamespace),
+				installSlurm(slurmNamespace, true, false, false, false),
+				testSlurmController(slurmNamespace),
+				testSlurmNodeSet(slurmNamespace),
+				uninstallSlurm(slurmNamespace),
+			},
+		},
+		{
+			name: "Install Slurm with Pyxis and Login",
+			steps: []types.Feature{
+				installSlurm(slurmNamespace, false, false, false, true),
+				testSlurmController(slurmNamespace),
+				testSlurmNodeSet(slurmNamespace),
+				uninstallSlurm(slurmNamespace),
+			},
+		},
+		{
+			name: "Install Slurm with Pyxis, Login, and Accounting",
+			steps: []types.Feature{
+				installSlurm(slurmNamespace, true, false, false, true),
+				testSlurmController(slurmNamespace),
+				testSlurmNodeSet(slurmNamespace),
+				uninstallSlurm(slurmNamespace),
+			},
+		},
+		{
+			name: "Uninstall slurm-operator",
+			steps: []types.Feature{
+				uninstallSlurmOperator(slinkyNamespace),
+				uninstallSlurmOperatorCRDs(slinkyNamespace),
+			},
+		},
+	}
 
-			err := manager.RunRepo(helm.WithArgs("add", "jetstack", "https://charts.jetstack.io"))
-			if err != nil {
-				t.Fatal("failed to add jetstack helm chart repo")
-			}
-			err = manager.RunRepo(helm.WithArgs("update"))
-			if err != nil {
-				t.Fatal("failed to upgrade helm repo")
-			}
-			err = manager.RunInstall(helm.WithName("cert-manager"), helm.WithNamespace("cert-manager"),
-				helm.WithReleaseName("jetstack/cert-manager"),
-				// pinning to a specific version to make sure we will have reproducible executions
-				helm.WithVersion("1.19.1"),
-				helm.WithArgs("--set 'crds.enabled=true'"),
-			)
-			if err != nil {
-				t.Fatal("failed to install cert-manager Helm chart", err)
-			}
-
-			return ctx
-		}).
-		Assess("cert-manager Deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cert-manager",
-					Namespace: "cert-manager",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the cert-manager deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("cert-manager-cainjector Deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cert-manager-cainjector",
-					Namespace: "cert-manager",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the cert-manager-cainjector deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("cert-manager-webhook deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cert-manager-webhook",
-					Namespace: "cert-manager",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the cert-manager-webhook deployment to reach a ready state")
-			}
-			return ctx
-		}).Feature()
-
-	installSlurmOperatorCRDS := features.New("Helm install slurm-operator-crds").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunInstall(
-				helm.WithName("slurm-operator-crds"),
-				helm.WithNamespace(slinkyNamespace),
-				helm.WithChart(basepath+"helm/slurm-operator-crds"),
-				helm.WithWait(),
-				helm.WithTimeout("10m"))
-			if err != nil {
-				t.Fatal("failed to invoke helm install slurm-operator-crds due to an error", err)
-			}
-			return ctx
-		}).Feature()
-
-	installSlurmOperator := features.New("Helm install slurm-operator").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			setOperatorImage := fmt.Sprintf("--set operator.image.tag=%s", testUID)
-			setWebhookImage := fmt.Sprintf("--set webhook.image.tag=%s", testUID)
-
-			err := manager.RunInstall(
-				helm.WithName("slurm-operator"),
-				helm.WithNamespace(slinkyNamespace),
-				helm.WithChart(basepath+"helm/slurm-operator"),
-				helm.WithWait(),
-				helm.WithTimeout("10m"),
-				helm.WithArgs(setOperatorImage),
-				helm.WithArgs(setWebhookImage))
-			if err != nil {
-				t.Fatal("failed to invoke helm install slurm-operator due to an error", err)
-			}
-			return ctx
-		}).
-		Assess("Deployment slurm-operator running successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "slurm-operator",
-					Namespace: slinkyNamespace,
-				},
-				Spec: appsv1.DeploymentSpec{},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the slurm-operator deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("Deployment slurm-operator-webhook running successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "slurm-operator",
-					Namespace: slinkyNamespace,
-				},
-				Spec: appsv1.DeploymentSpec{},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the slurm-operator-webhook deployment to reach a ready state")
-			}
-			return ctx
-		}).Feature()
-
-	installSlurm := features.New("Helm install slurm").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			setValuesFile := fmt.Sprintf("--values %s/helm/slurm/values.yaml", basepath)
-
-			err := manager.RunInstall(
-				helm.WithName("slurm"),
-				helm.WithNamespace(slurmNamespace),
-				helm.WithChart(basepath+"helm/slurm"),
-				helm.WithArgs(setValuesFile),
-				helm.WithWait(),
-				helm.WithTimeout("10m"))
-
-			if err != nil {
-				t.Fatal("failed to invoke helm install operation due to an error", err)
-			}
-			return ctx
-		}).
-		Assess("Slurm Cluster Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			// Set up controller-runtime client
-			var scheme = runtime.NewScheme()
-			err := slinkyv1beta1.AddToScheme(scheme)
-			if err != nil {
-				t.Fatalf("failed adding api slinkyv1beta1 to scheme: %v", err)
-			}
-			err = appsv1.AddToScheme(scheme)
-			if err != nil {
-				t.Fatalf("failed adding api appsv1 to scheme: %v", err)
-			}
-			err = corev1.AddToScheme(scheme)
-			if err != nil {
-				t.Fatalf("failed adding api corev1 to scheme: %v", err)
-			}
-
-			crClient, err := klient.NewControllerRuntimeClient(config.Client().RESTConfig(), scheme)
-			if err != nil {
-				t.Fatalf("failed creating new controller-runtime client: %v", err)
-			}
-
-			CheckControllerHealth(crClient, ctx, slurmNamespace, t, config)
-			CheckRestAPIHealth(crClient, ctx, slurmNamespace, t, config)
-			CheckNodeSetHealth(crClient, ctx, slurmNamespace, t, config)
-
-			return ctx
-		}).Feature()
-	scontrolPing := features.New("scontrol ping succeeds").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			for retries := range 4 {
-				cmd := exec.Command("kubectl", "exec", "-n", slurmNamespace, "slurm-controller-0", "--", "scontrol", "ping")
-				_, err := cmd.Output()
-				if err == nil {
-					break
-				}
-
-				if retries == 3 {
-					t.Fatalf("failed running 'kubectl exec -n %s slurm-controller-0 -- scontrol ping': %v", slurmNamespace, err)
-					break
-				}
-
-				time.Sleep(30 * time.Second)
-			}
-
-			return ctx
-		}).Feature()
-	srun := features.New("srun functions").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			for retries := range 4 {
-				cmd := exec.Command("kubectl", "exec", "-n", slurmNamespace, "slurm-controller-0", "--", "srun", "hostname")
-				_, err := cmd.Output()
-				if err == nil {
-					break
-				}
-
-				if retries == 3 {
-					t.Fatalf("failed running 'kubectl exec -n %s slurm-controller-0 -- srun hostname': %v", slurmNamespace, err)
-					break
-				}
-
-				time.Sleep(30 * time.Second)
-			}
-
-			return ctx
-		}).Feature()
-
-	uninstallSlurm := features.New("Helm uninstall slurm").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunUninstall(
-				helm.WithName("slurm"),
-				helm.WithNamespace(slurmNamespace),
-				helm.WithWait(),
-				helm.WithTimeout("5m"),
-			)
-
-			if err != nil {
-				t.Fatal("failed to invoke helm uninstall slurm due to an error", err)
-			}
-			return ctx
-		}).Feature()
-
-	uninstallSlurmOperator := features.New("Helm uninstall slurm-operator").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunUninstall(
-				helm.WithName("slurm-operator"),
-				helm.WithNamespace(slinkyNamespace),
-				helm.WithWait(),
-				helm.WithTimeout("5m"),
-			)
-
-			if err != nil {
-				t.Fatal("failed to invoke helm uninstall slurm-operator due to an error", err)
-			}
-			return ctx
-		}).Feature()
-
-	uninstallSlurmOperatorCRDs := features.New("Helm uninstall slurm-operator-crds").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunUninstall(
-				helm.WithName("slurm-operator-crds"),
-				helm.WithWait(),
-				helm.WithNamespace(slinkyNamespace),
-				helm.WithTimeout("5m"),
-			)
-
-			if err != nil {
-				t.Fatal("failed to invoke helm uninstall slurm-operator-crds due to an error", err)
-			}
-			return ctx
-		}).Feature()
-
-	uninstallCertMgr := features.New("Helm uninstall cert-manager").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunUninstall(
-				helm.WithName("cert-manager"),
-				helm.WithWait(),
-				helm.WithNamespace("cert-manager"),
-				helm.WithTimeout("5m"),
-			)
-
-			if err != nil {
-				t.Fatal("failed to invoke helm uninstall cert-manager due to an error", err)
-			}
-			return ctx
-		}).Feature()
-
-	_ = testenv.Test(
-		t,
-		installCertMgr,
-		installSlurmOperatorCRDS,
-		installSlurmOperator,
-		installSlurm,
-		scontrolPing,
-		srun,
-		uninstallSlurm,
-		uninstallSlurmOperator,
-		uninstallSlurmOperatorCRDs,
-		uninstallCertMgr)
-}
-
-func TestHelmInstallationWithAccounting(t *testing.T) {
-	const slurmNamespace = "slurm"
-	const slinkyNamespace = "slinky"
-
-	installCertMgr := features.New("Helm install cert-manager").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunRepo(helm.WithArgs("add", "jetstack", "https://charts.jetstack.io"))
-			if err != nil {
-				t.Fatal("failed to add jetstack helm chart repo")
-			}
-			err = manager.RunRepo(helm.WithArgs("update"))
-			if err != nil {
-				t.Fatal("failed to upgrade helm repo")
-			}
-			err = manager.RunInstall(helm.WithName("cert-manager"), helm.WithNamespace("cert-manager"),
-				helm.WithReleaseName("jetstack/cert-manager"),
-				// pinning to a specific version to make sure we will have reproducible executions
-				helm.WithVersion("1.19.1"),
-				helm.WithArgs("--set 'crds.enabled=true'"),
-			)
-			if err != nil {
-				t.Fatal("failed to install cert-manager Helm chart", err)
-			}
-
-			return ctx
-		}).
-		Assess("cert-manager Deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cert-manager",
-					Namespace: "cert-manager",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the cert-manager deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("cert-manager-cainjector Deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cert-manager-cainjector",
-					Namespace: "cert-manager",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the cert-manager-cainjector deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("cert-manager-webhook deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "cert-manager-webhook",
-					Namespace: "cert-manager",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the cert-manager-webhook deployment to reach a ready state")
-			}
-			return ctx
-		}).Feature()
-
-	installSlurmOperatorCRDS := features.New("Helm install slurm-operator-crds").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunInstall(
-				helm.WithName("slurm-operator-crds"),
-				helm.WithNamespace(slinkyNamespace),
-				helm.WithChart(basepath+"helm/slurm-operator-crds"),
-				helm.WithWait(),
-				helm.WithTimeout("10m"))
-			if err != nil {
-				t.Fatal("failed to invoke helm install slurm-operator-crds due to an error", err)
-			}
-			return ctx
-		}).Feature()
-
-	installSlurmOperator := features.New("Helm install slurm-operator").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			setOperatorImage := fmt.Sprintf("--set operator.image.tag=%s", testUID)
-			setWebhookImage := fmt.Sprintf("--set webhook.image.tag=%s", testUID)
-
-			err := manager.RunInstall(
-				helm.WithName("slurm-operator"),
-				helm.WithNamespace(slinkyNamespace),
-				helm.WithChart(basepath+"helm/slurm-operator"),
-				helm.WithWait(),
-				helm.WithTimeout("10m"),
-				helm.WithArgs(setOperatorImage),
-				helm.WithArgs(setWebhookImage))
-			if err != nil {
-				t.Fatal("failed to invoke helm install slurm-operator due to an error", err)
-			}
-			return ctx
-		}).
-		Assess("Deployment slurm-operator running successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "slurm-operator",
-					Namespace: slinkyNamespace,
-				},
-				Spec: appsv1.DeploymentSpec{},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the slurm-operator deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("Deployment slurm-operator-webhook running successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "slurm-operator",
-					Namespace: slinkyNamespace,
-				},
-				Spec: appsv1.DeploymentSpec{},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the slurm-operator-webhook deployment to reach a ready state")
-			}
-			return ctx
-		}).Feature()
-
-	installMariadbOperator := features.New("Helm install mariadb-operator").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			manager := helm.New(config.KubeconfigFile())
-
-			err := manager.RunRepo(helm.WithArgs("add", "mariadb-operator", "https://helm.mariadb.com/mariadb-operator"))
-			if err != nil {
-				t.Fatal("failed to add mariadb-operator helm chart repo")
-			}
-			err = manager.RunRepo(helm.WithArgs("update"))
-			if err != nil {
-				t.Fatal("failed to upgrade helm repo")
-			}
-			err = manager.RunInstall(helm.WithName("mariadb-operator"), helm.WithNamespace("mariadb"),
-				helm.WithReleaseName("mariadb-operator/mariadb-operator"),
-				// pinning to a specific version to make sure we will have reproducible executions
-				helm.WithVersion("25.10.2"),
-				helm.WithArgs("--set 'crds.enabled=true'"),
-			)
-			if err != nil {
-				t.Fatal("failed to install mariadb-operator Helm chart", err)
-			}
-
-			return ctx
-		}).
-		Assess("mariadb-operator deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "mariadb-operator",
-					Namespace: "mariadb",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the mariadb-operator deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("mariadb-operator-cert-controller deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "mariadb-operator-cert-controller",
-					Namespace: "mariadb",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the mariadb-operator-cert-controller deployment to reach a ready state")
-			}
-			return ctx
-		}).
-		Assess("mariadb-operator-webhook deployment Is Running Successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "mariadb-operator-webhook",
-					Namespace: "mariadb",
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).ResourceScaled(deployment, func(object k8s.Object) int32 {
-				return object.(*appsv1.Deployment).Status.ReadyReplicas
-			}, 1))
-			if err != nil {
-				t.Fatal("failed waiting for the mariadb-operator-webhook deployment to reach a ready state")
-			}
-			return ctx
-		}).Feature()
-
-	applyMariaDBYaml := features.New("Create MariaDB instance for Slurm").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			path := basepath + "/hack/resources/mariadb.yaml"
-
-			cmd := exec.Command("kubectl", "apply", "-f", path)
-			_, err := cmd.Output()
-			if err != nil {
-				t.Fatalf("failed running 'kubectl apply -f %s /hack/resources/mariadb.yaml: %v", basepath, err)
-			}
-
-			return ctx
-		}).
-		Assess("Pod mariadb-0 running successfully", func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "mariadb-0",
-					Namespace: slurmNamespace,
-				},
-			}
-			err := wait.For(conditions.New(config.Client().Resources()).PodRunning(pod))
-			if err != nil {
-				t.Fatal("failed waiting for the mariadb-0 pod to reach a ready state")
-			}
-			return ctx
-		}).Feature()
-	installSlurm := NewSlurmInstall(t, slurmNamespace, true)
-	scontrolPing := features.New("scontrol ping succeeds").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			for retries := range 4 {
-				cmd := exec.Command("kubectl", "exec", "-n", slurmNamespace, "slurm-controller-0", "--", "scontrol", "ping")
-				_, err := cmd.Output()
-				if err == nil {
-					break
-				}
-
-				if retries == 3 {
-					t.Fatalf("failed running 'kubectl exec -n %s slurm-controller-0 -- scontrol ping': %v", slurmNamespace, err)
-					break
-				}
-
-				time.Sleep(30 * time.Second)
-			}
-
-			return ctx
-		}).Feature()
-	srun := features.New("srun functions").
-		Setup(func(ctx context.Context, t *testing.T, config *envconf.Config) context.Context {
-			for retries := range 4 {
-				scancel := exec.Command("kubectl", "exec", "-n", slurmNamespace, "slurm-controller-0", "--", "scancel", "-u", "slurm")
-				_, _ = scancel.Output()
-				cmd := exec.Command("kubectl", "exec", "-n", slurmNamespace, "slurm-controller-0", "--", "srun", "hostname")
-				_, err := cmd.Output()
-				if err == nil {
-					break
-				}
-
-				if retries == 3 {
-					t.Fatalf("failed running 'kubectl exec -n %s slurm-controller-0 -- srun hostname': %v", slurmNamespace, err)
-					break
-				}
-
-				time.Sleep(30 * time.Second)
-			}
-
-			return ctx
-		}).Feature()
-
-	_ = testenv.Test(t,
-		installCertMgr,
-		installSlurmOperatorCRDS,
-		installSlurmOperator,
-		installMariadbOperator,
-		applyMariaDBYaml,
-		installSlurm,
-		scontrolPing,
-		srun)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = testenv.Test(t, tt.steps...)
+		})
+	}
 }
