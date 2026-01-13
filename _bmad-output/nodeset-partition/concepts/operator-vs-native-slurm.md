@@ -227,7 +227,7 @@ flowchart TD
 |------|------|----------|
 | **無法即時變更** | ConfigMap propagation 需 1-2 分鐘 | 緊急操作（如 drain partition）無法即時生效 |
 | **無法增量修改** | slurm.conf 是完整配置，非增量 | 每次變更都需重建完整節點列表 |
-| **無法獨立建立 Partition** | Partition 透過 NodeSet 管理 | 無法建立跨多個 NodeSet 的 Partition |
+| **無法獨立建立 Partition** | Partition 透過 NodeSet 管理 | 無法建立跨多個 NodeSet 的 Partition (可透過 `extraConf` 實現) |
 | **無法直接觸發** | 只能透過 `scontrol reconfigure` | 無法精確控制觸發哪些元件 |
 | **重載成本較高** | `scontrol reconfigure` 重載整份配置 | 大型叢集可能有效能影響 |
 
