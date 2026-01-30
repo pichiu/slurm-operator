@@ -2,16 +2,16 @@
 SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
 SPDX-License-Identifier: Apache-2.0
 */}}
-{{ if .Values.priorityClass }}
-{{ if .Values.priorityClass.create }}
+
+{{- if .Values.priorityClass }}
+{{- if .Values.priorityClass.create }}
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: {{ include "slurm.priorityClassName" . }}
-  annotations:
-    description: "Priority class for critical Slurm pods."
-value: {{ .Values.priorityClass.value | default 1000000000 }}
+description: {{ .Values.priorityClass.description }}
+value: {{ .Values.priorityClass.value }}
 globalDefault: false
-preemptionPolicy: {{ .Values.priorityClass.preemptionPolicy | default "PreemptLowerPriority" }}
-{{- end }}
-{{ end }}
+preemptionPolicy: {{ .Values.priorityClass.preemptionPolicy }}
+{{- end }}{{- /* if .Values.priorityClass.create */}}
+{{- end }}{{- /* if .Values.priorityClass */}}
