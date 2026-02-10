@@ -217,6 +217,8 @@ flowchart TB
 - 存取 GPU 裝置節點（需要裝置存取權限）
 - 進行 bind mount 注入 GPU 程式庫（需要 `SYS_ADMIN`）
 
+> **好消息**：Slurm Operator 的 slurmd 容器**預設已經是 `privileged: true`**，並自動加入 `BPF`、`NET_ADMIN`、`SYS_ADMIN`、`SYS_NICE` capabilities（見 `internal/builder/workerbuilder/worker_app.go`）。因此**不需要額外設定 securityContext**。
+
 ### 2.5 多節點 Singularity 作業的資料流
 
 客戶的典型使用場景是跨節點 GPU 訓練。以下是完整的跨節點資料流：
@@ -553,6 +555,8 @@ kubectl exec -it -n slurm slurm-compute-apptainer-0 -- \
 
 ### 6.1 完整範例
 
+> **重要**：以下配置已根據 Helm chart 的實際結構驗證。`volumes` 必須放在 `podSpec.volumes`（對應 CRD 的 `template.spec.volumes`），`volumeMounts` 必須放在各容器下（如 `slurmd.volumeMounts`、`login.volumeMounts`）。
+
 ```yaml
 # values-singularity.yaml
 
@@ -563,68 +567,117 @@ controller:
       tag: 25.11-ubuntu24.04
 
 nodesets:
-  slinky:
+  apptainer:                          # NodeSet key，會影響自動產生的 partition 名稱
+    enabled: true
+    replicas: 2                       # 計算節點數量
+    useResourceLimits: true           # 將 resources.limits 傳遞給 slurmd
+    # slurmd 容器配置
     slurmd:
       image:
         repository: your-registry/slurmd-apptainer
         tag: 25.11-ubuntu24.04
-      securityContext:
-        privileged: true
-    volumes:
-      - name: sif-storage
-        persistentVolumeClaim:
-          claimName: twcc-cntr-pvc
-      - name: user-work
-        persistentVolumeClaim:
-          claimName: user-work-pvc
-      - name: user-home
-        persistentVolumeClaim:
-          claimName: user-home-pvc
-    volumeMounts:
-      - name: sif-storage
-        mountPath: /work/TWCC_cntr
-        readOnly: true
-      - name: user-work
-        mountPath: /work/users
-      - name: user-home
-        mountPath: /home/users
+      # 注意：securityContext 不需要手動設定
+      # Operator 程式碼已硬編碼 privileged: true 及 SYS_ADMIN 等 capabilities
+      # （見 internal/builder/workerbuilder/worker_app.go）
+      resources:
+        requests:
+          nvidia.com/gpu: "8"
+        limits:
+          nvidia.com/gpu: "8"
+      volumeMounts:                   # volumeMounts 放在容器層級
+        - name: sif-storage
+          mountPath: /work/TWCC_cntr
+          readOnly: true
+        - name: user-work
+          mountPath: /work/users
+        - name: user-home
+          mountPath: /home/users
+    # Pod 層級配置
+    podSpec:
+      volumes:                        # volumes 放在 podSpec 層級
+        - name: sif-storage
+          persistentVolumeClaim:
+            claimName: twcc-cntr-pvc
+        - name: user-work
+          persistentVolumeClaim:
+            claimName: user-work-pvc
+        - name: user-home
+          persistentVolumeClaim:
+            claimName: user-home-pvc
 
 loginsets:
-  slinky:
+  apptainer:
+    enabled: true                     # 注意：LoginSet 預設 enabled: false，必須明確啟用
+    replicas: 1
+    # login 容器配置
     login:
       image:
         repository: your-registry/login-apptainer
         tag: 25.11-ubuntu24.04
-    volumes:
-      - name: sif-storage
-        persistentVolumeClaim:
-          claimName: twcc-cntr-pvc
-      - name: user-work
-        persistentVolumeClaim:
-          claimName: user-work-pvc
-      - name: user-home
-        persistentVolumeClaim:
-          claimName: user-home-pvc
-    volumeMounts:
-      - name: sif-storage
-        mountPath: /work/TWCC_cntr
-        readOnly: true
-      - name: user-work
-        mountPath: /work/users
-      - name: user-home
-        mountPath: /home/users
+      volumeMounts:                   # volumeMounts 放在容器層級
+        - name: sif-storage
+          mountPath: /work/TWCC_cntr
+          readOnly: true
+        - name: user-work
+          mountPath: /work/users
+        - name: user-home
+          mountPath: /home/users
+    # Pod 層級配置
+    podSpec:
+      volumes:                        # volumes 放在 podSpec 層級
+        - name: sif-storage
+          persistentVolumeClaim:
+            claimName: twcc-cntr-pvc
+        - name: user-work
+          persistentVolumeClaim:
+            claimName: user-work-pvc
+        - name: user-home
+          persistentVolumeClaim:
+            claimName: user-home-pvc
 ```
+
+> **Helm Values 結構對照**（常見錯誤提醒）：
+>
+> | 設定項目 | 正確位置 | 錯誤位置 |
+> |---------|---------|---------|
+> | volumes | `nodesets.<name>.podSpec.volumes` | ~~`nodesets.<name>.volumes`~~ |
+> | volumeMounts | `nodesets.<name>.slurmd.volumeMounts` | ~~`nodesets.<name>.volumeMounts`~~ |
+> | securityContext | 不需設定（slurmd 預設 privileged） | — |
+> | LoginSet enabled | 必須設 `enabled: true` | 預設 `false` |
 
 ### 6.2 與 Pyxis 設定的差異
 
 | 設定項目 | Pyxis 版本 | Singularity 版本 |
 |---------|-----------|-----------------|
 | 映像來源 | `ghcr.io/slinkyproject/slurmd-pyxis` | 自建 `your-registry/slurmd-apptainer` |
-| `plugstack.conf` | 必要（`include /usr/share/pyxis/*`） | **不需要** |
-| `privileged` | 必要（enroot 需要） | 必要（Singularity `--nv` 需要 GPU 裝置存取） |
+| `plugstack.conf` | 必要（透過 `configFiles` 設定：`include /usr/share/pyxis/*`） | **不需要** |
+| `privileged` | 預設已啟用（Operator 硬編碼） | 預設已啟用（Operator 硬編碼） |
 | 額外 PVC | enroot cache 儲存 | `.sif` 檔案儲存 + 使用者目錄 |
 
-> **關鍵差異**：Singularity 版本**不需要** `plugstack.conf` 設定，因為 Singularity 不是 Slurm SPANK 插件，而是作為獨立的容器執行檔由 `srun` 直接呼叫。
+> **關鍵差異**：
+> - Singularity 版本**不需要** `plugstack.conf` 設定，因為 Singularity 不是 Slurm SPANK 插件，而是作為獨立的容器執行檔由 `srun` 直接呼叫。
+> - Pyxis 版本需透過 Helm 的 `configFiles` 機制注入 `plugstack.conf`（例如 `configFiles: {"plugstack.conf": "include /usr/share/pyxis/*"}`），該設定會掛載至 `/etc/slurm/`。
+> - 兩者的 slurmd 容器**預設都是 privileged**，無需額外設定 securityContext。
+
+### 6.3 `configFiles` 額外設定檔機制
+
+Slurm Operator 透過 Helm 的 `configFiles`（`values.yaml` 頂層欄位）提供注入額外 Slurm 設定檔的機制。這些檔案會掛載至所有元件的 `/etc/slurm/` 目錄。
+
+**Singularity 方案通常不需要額外的 `configFiles`**，但如果需要自訂 `gres.conf`、`cgroup.conf` 等設定檔，可透過此機制注入：
+
+```yaml
+# 選用：額外 Slurm 設定檔
+configFiles:
+  # 自訂 GPU 偵測設定（預設 Operator 已自動生成 AutoDetect=nvidia）
+  # gres.conf: |
+  #   AutoDetect=nvidia
+  # 自訂 cgroup 設定（預設 Operator 已自動生成）
+  # cgroup.conf: |
+  #   CgroupPlugin=cgroup/v2
+  #   IgnoreSystemd=yes
+```
+
+> **注意**：`gres.conf`（`AutoDetect=nvidia`）和 `cgroup.conf`（`CgroupPlugin=cgroup/v2`）由 Operator 程式碼自動生成（見 `internal/builder/controllerbuilder/controller_config.go`）。只有在需要覆蓋預設值時才使用 `configFiles`。
 
 ---
 
@@ -648,7 +701,7 @@ srun singularity run --nv $SIF python train.py
 
 ```bash
 #!/bin/bash
-#SBATCH --partition=slinky              # Operator NodeSet 對應的 partition
+#SBATCH --partition=all                 # 使用 sinfo 確認實際 partition 名稱
                                         # 不需要 module load
 
 SIF=/work/TWCC_cntr/pytorch_21.11-py3_horovod.sif
@@ -659,11 +712,17 @@ srun singularity run --nv $SIF python train.py
 
 | 項目 | 變更內容 |
 |------|---------|
-| `--partition` | 改為 Operator NodeSet 對應的 partition 名稱 |
+| `--partition` | 改為 Operator 中的 partition 名稱（見下方說明） |
 | `module load singularity` | 移除（apptainer 已預裝在映像中） |
 | `.sif` 路徑 | 不變（透過 PVC 掛載到相同路徑） |
 | `singularity run --nv` | 不變（apptainer 提供 singularity 命令別名） |
 | 環境變數 | UCX/NCCL 設定可能需依環境微調 |
+
+> **Partition 名稱說明**：Slurm Operator 會自動產生兩類 partition：
+> 1. **每個 NodeSet 自動產生的 partition**：名稱為 NodeSet 的全名（含 Helm release prefix），例如 NodeSet key 為 `apptainer` 時，partition 名稱可能為 `slurm-compute-apptainer`。
+> 2. **`partitions:` 頂層區塊定義的額外 partition**：預設有一個名為 `all` 的 partition，包含所有 NodeSet（`Nodes=ALL`）。
+>
+> 部署後請使用 `sinfo` 命令確認實際的 partition 名稱。
 
 ### 7.2 完整遷移後 Job Script
 
@@ -676,7 +735,7 @@ srun singularity run --nv $SIF python train.py
 #SBATCH --gres=gpu:8
 #SBATCH --time=00:10:00
 #SBATCH --account="PROJECT_ID"
-#SBATCH --partition=slinky
+#SBATCH --partition=all            # 使用 sinfo 確認實際名稱
 
 export UCX_NET_DEVICES=mlx5_0:1
 export UCX_IB_GPU_DIRECT_RDMA=1
@@ -703,14 +762,14 @@ mv pytorch_24.01-py3.sif /work/TWCC_cntr/
 **互動式容器存取：**
 
 ```bash
-srun --partition=slinky --gres=gpu:1 --pty \
+srun --partition=all --gres=gpu:1 --pty \
     singularity shell --nv /work/TWCC_cntr/pytorch_21.11-py3_horovod.sif
 ```
 
 **掛載額外目錄：**
 
 ```bash
-srun --partition=slinky --gres=gpu:8 \
+srun --partition=all --gres=gpu:8 \
     singularity run --nv \
     --bind /work/users/$USER/datasets:/data \
     /work/TWCC_cntr/pytorch_21.11-py3_horovod.sif \
@@ -762,32 +821,47 @@ Singularity/Apptainer 和 Pyxis 可以在同一個 Slurm 叢集中並存，透�
 
 ```yaml
 # 同時支援兩種容器運行時
+
+# Pyxis 需要 plugstack.conf
+configFiles:
+  plugstack.conf: |
+    include /usr/share/pyxis/*
+
 nodesets:
   # Singularity/Apptainer NodeSet
   apptainer:
+    enabled: true
     slurmd:
       image:
         repository: your-registry/slurmd-apptainer
+        tag: 25.11-ubuntu24.04
     partition:
-      name: apptainer
+      enabled: true
 
   # Pyxis + Enroot NodeSet
   pyxis:
+    enabled: true
     slurmd:
       image:
         repository: ghcr.io/slinkyproject/slurmd-pyxis
+        tag: 25.11-ubuntu24.04
     partition:
-      name: pyxis
+      enabled: true
 ```
+
+> **注意**：每個 NodeSet 會自動產生一個同名的 partition。實際 partition 名稱包含 Helm release prefix（例如 `slurm-compute-apptainer`、`slurm-compute-pyxis`）。此外，預設的 `all` partition 會包含所有 NodeSet。部署後請用 `sinfo` 確認實際名稱。
 
 使用者依需求選擇 partition：
 
 ```bash
-# 使用 Singularity
-srun --partition=apptainer singularity run --nv image.sif python train.py
+# 使用 Singularity（partition 名稱以 sinfo 輸出為準）
+srun --partition=slurm-compute-apptainer singularity run --nv image.sif python train.py
 
 # 使用 Pyxis
-srun --partition=pyxis --container-image=pytorch:latest python train.py
+srun --partition=slurm-compute-pyxis --container-image=pytorch:latest python train.py
+
+# 或使用包含所有節點的 all partition
+srun --partition=all singularity run --nv image.sif python train.py
 ```
 
 ---
@@ -801,20 +875,21 @@ srun --partition=pyxis --container-image=pytorch:latest python train.py
 **解決方案**：
 
 1. 部署 [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/) 或 NVIDIA device plugin
-2. 在 NodeSet 的資源請求中指定 GPU：
+2. 在 NodeSet 的 slurmd 資源請求中指定 GPU：
 
 ```yaml
 nodesets:
-  slinky:
+  apptainer:
     slurmd:
       resources:
         requests:
           nvidia.com/gpu: "8"
         limits:
           nvidia.com/gpu: "8"
-      securityContext:
-        privileged: true
+      # securityContext 不需設定，Operator 預設已是 privileged: true
 ```
+
+> **注意**：slurmd 容器預設已啟用 `privileged: true` 及 `SYS_ADMIN` capability，無需額外設定 securityContext。
 
 ### 9.2 InfiniBand / RDMA 存取
 
@@ -826,11 +901,12 @@ nodesets:
 
 ```yaml
 nodesets:
-  slinky:
-    template:
-      spec:
-        hostNetwork: true
+  apptainer:
+    podSpec:                  # 注意：是 podSpec，不是 template.spec
+      hostNetwork: true
 ```
+
+> **Helm 結構說明**：在 Helm values 中使用 `podSpec`，模板會將其渲染為 CRD 的 `template.spec`。
 
 - **方案 B：RDMA Device Plugin + Multus CNI**
 
@@ -840,17 +916,16 @@ nodesets:
 
 **問題**：Singularity 的 `--nv` 和 `--fakeroot` 在容器中可能受 Kubernetes securityContext 限制。
 
-**解決方案**：
+**解決方案**：Operator 的 slurmd 容器**預設已經是 `privileged: true`**（硬編碼於 `internal/builder/workerbuilder/worker_app.go`），並自動加入以下 capabilities：
 
-```yaml
-nodesets:
-  slinky:
-    slurmd:
-      securityContext:
-        privileged: true    # 允許完整裝置存取
-```
+- `BPF`
+- `NET_ADMIN`
+- `SYS_ADMIN`
+- `SYS_NICE`
 
-> **安全提醒**：`privileged: true` 授予 Pod 完整主機權限。生產環境中可評估使用更細粒度的 capabilities（如 `SYS_ADMIN`、`SYS_PTRACE`）替代。
+因此**不需要額外的 securityContext 設定**。Singularity 的 `--nv`（GPU 透傳）和 `--fakeroot`（user namespace）操作所需的權限已全部具備。
+
+> **安全提醒**：`privileged: true` 授予 Pod 完整主機權限。如需更細粒度的控制，可透過 `slurmd.securityContext` 覆蓋預設值（使用 strategic merge patch），但需確保至少保留 `SYS_ADMIN` capability 以支援 Singularity 的 loop mount 操作。
 
 ### 9.4 共享儲存
 
@@ -893,7 +968,7 @@ nodesets:
 | 錯誤訊息 | 可能原因 | 解決方案 |
 |---------|---------|---------|
 | `singularity: command not found` | Apptainer 未安裝在映像中 | 確認使用自建含 apptainer 的映像 |
-| `FATAL: container creation failed: mount error` | securityContext 權限不足 | 設定 `privileged: true` |
+| `FATAL: container creation failed: mount error` | securityContext 權限不足 | 確認 slurmd 容器為 privileged（Operator 預設已啟用） |
 | `CUDA driver not found` | `--nv` 無法找到 GPU 裝置 | 確認 GPU Operator 已部署、Pod 有 GPU resource limits |
 | `No such file or directory: /work/TWCC_cntr/*.sif` | PVC 未正確掛載 | 檢查 PVC 狀態和 volumeMount 路徑 |
 | `UCX ERROR: no device` | InfiniBand 裝置對 Pod 不可見 | 啟用 hostNetwork 或 RDMA device plugin |
@@ -923,9 +998,9 @@ kubectl exec -it -n slurm slurm-compute-apptainer-0 -- \
 **步驟 4：測試透過 Slurm 執行**
 
 ```bash
-# 從 LoginSet Pod 提交測試作業
+# 從 LoginSet Pod 提交測試作業（partition 名稱以 sinfo 輸出為準）
 kubectl exec -it -n slurm slurm-login-apptainer-0 -- \
-    srun --partition=slinky --gres=gpu:1 \
+    srun --partition=all --gres=gpu:1 \
     singularity exec --nv /work/TWCC_cntr/pytorch_21.11-py3_horovod.sif nvidia-smi
 ```
 
@@ -947,7 +1022,7 @@ kubectl get pod -n slurm slurm-compute-apptainer-0 \
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:8
-#SBATCH --partition=slinky
+#SBATCH --partition=all            # 使用 sinfo 確認實際名稱
 
 export UCX_NET_DEVICES=mlx5_0:1
 export UCX_IB_GPU_DIRECT_RDMA=1
