@@ -55,6 +55,7 @@
 |------|------|
 | [Partition 管理深入解析](./deep-dive-partition.md) | Partition CRUD 限制、REST API 分析、管理方案評估 |
 | [Pyxis 與 NodeSet 深入解析](./deep-dive-pyxis-nodeset.md) | Pyxis 容器化作業、三層架構、Enroot 設定 |
+| [Singularity/Apptainer 深入解析](./deep-dive-singularity-apptainer.md) | Singularity 容器運行時支援、TWCC 遷移方案、SIF 格式、與 Pyxis 比較 |
 | [Helm Chart 深入解析](./deep-dive-helm.md) | Helm Chart 結構與客製化 |
 | [NodeSet 儲存深入解析](./deep-dive-nodeset-storage.md) | NodeSet 儲存配置詳解 |
 | [Job 與 Storage 深入解析](./deep-dive-job-storage.md) | Slurm Job 與 K8s Storage 的關係 |
