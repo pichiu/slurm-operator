@@ -28,19 +28,16 @@ spec:
   {{- end }}{{- /* with .Values.accounting.externalConfig */}}
 {{- else }}{{- /* if .Values.accounting.external */}}
   slurmKeyRef:
-    {{- if .Values.slurmKeyRef }}
-    {{- toYaml .Values.slurmKeyRef | nindent 4 }}
-    {{- else }}
     name: {{ include "slurm.authSlurmRef.name" . }}
     key: {{ include "slurm.authSlurmRef.key" . }}
-    {{- end }}{{- /* if .Values.slurmKeyRef */}}
   jwtHs256KeyRef:
-    {{- if .Values.jwtHs256KeyRef }}
-    {{- toYaml .Values.jwtHs256KeyRef | nindent 4 }}
-    {{- else }}
     name: {{ include "slurm.authJwtHs256Ref.name" . }}
     key: {{ include "slurm.authJwtHs256Ref.key" . }}
-    {{- end }}{{- /* if .Values.jwtHs256KeyRef */}}
+  {{- if .Values.jwksKeys.enabled }}
+  jwksKeyRef:
+    name: {{ include "slurm.authJwksRef.name" . }}
+    key: {{ include "slurm.authJwksRef.key" . }}
+  {{- end }}{{- /* if .Values.jwksKeys.enabled */}}
   {{- if (include "slurm.accounting.extraConf" .) }}
   extraConf: |
     {{- include "slurm.accounting.extraConf" . | nindent 4 }}

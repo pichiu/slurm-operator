@@ -58,9 +58,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 Format image reference from image object.
 */}}
 {{- define "format-image" -}}
-{{- $repository := required "image repository is required" .repository -}}
-{{- $tag := required "image tag is required" .tag -}}
-{{- printf "%s:%s" $repository $tag | toString -}}
+{{- if kindIs "string" . -}}
+  {{- $image := required "image is required" . -}}
+  {{- printf $image | toString -}}
+{{- else -}}
+  {{- $repository := required "image repository is required" .repository -}}
+  {{- $tag := required "image tag is required" .tag -}}
+  {{- printf "%s:%s" $repository $tag | toString -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -158,5 +163,9 @@ Ref: https://github.com/helm/helm/issues/2600
 Allow the PriorityClassName to be overridden.
 */}}
 {{- define "slurm.priorityClassName" -}}
+{{- if .Values.priorityClass.enabled }}
 {{- default "slurm-priority-critical" .Values.priorityClass.name }}
+{{- else }}
+{{- print "" }}
+{{- end }}
 {{- end }}
