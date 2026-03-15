@@ -22,8 +22,8 @@ import (
 func Test_NodeSetEventHandler_Create(t *testing.T) {
 	utilruntime.Must(slinkyv1beta1.AddToScheme(clientgoscheme.Scheme))
 	slurmKeyRef := testutils.NewSlurmKeyRef("foo")
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef("foo")
-	controller := testutils.NewController("slurm1", slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeyRef := testutils.NewJwtKeyRef("foo")
+	controller := testutils.NewController("slurm1", slurmKeyRef, jwtKeyRef, nil)
 	nodeset := testutils.NewNodeset("slurmA", controller, 2)
 	type fields struct {
 		Reader client.Reader
@@ -71,8 +71,8 @@ func Test_NodeSetEventHandler_Create(t *testing.T) {
 func Test_NodeSetEventHandler_Delete(t *testing.T) {
 	utilruntime.Must(slinkyv1beta1.AddToScheme(clientgoscheme.Scheme))
 	slurmKeyRef := testutils.NewSlurmKeyRef("foo")
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef("foo")
-	controller := testutils.NewController("slurm1", slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeyRef := testutils.NewJwtKeyRef("foo")
+	controller := testutils.NewController("slurm1", slurmKeyRef, jwtKeyRef, nil)
 	nodeset := testutils.NewNodeset("slurmA", controller, 2)
 	type fields struct {
 		Reader client.Reader
@@ -160,8 +160,8 @@ func Test_NodeSetEventHandler_Generic(t *testing.T) {
 func Test_NodeSetEventHandler_Update(t *testing.T) {
 	utilruntime.Must(slinkyv1beta1.AddToScheme(clientgoscheme.Scheme))
 	slurmKeyRef := testutils.NewSlurmKeyRef("foo")
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef("foo")
-	controller := testutils.NewController("slurm1", slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeyRef := testutils.NewJwtKeyRef("foo")
+	controller := testutils.NewController("slurm1", slurmKeyRef, jwtKeyRef, nil)
 	nodeset := testutils.NewNodeset("slurmA", controller, 2)
 	type fields struct {
 		Reader client.Reader

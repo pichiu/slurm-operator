@@ -42,7 +42,7 @@ repos:
       - id: mdformat
         args:
           - --wrap=80
-        exclude: (\.chglog/.*|helm/.*|.github/ISSUE_TEMPLATE/.*)\.md
+        exclude: ^helm/.*/README\.md|^\.github/ISSUE_TEMPLATE/.*
         additional_dependencies:
           - mdformat-toc
           - mdformat-tables

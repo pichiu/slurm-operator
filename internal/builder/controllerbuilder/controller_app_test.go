@@ -10,6 +10,7 @@ import (
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/common"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"k8s.io/utils/set"
@@ -40,6 +41,9 @@ func TestBuilder_BuildController(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "slurm",
 					},
+					Spec: slinkyv1beta1.ControllerSpec{
+						JwtKeyRef: &corev1.SecretKeySelector{},
+					},
 				},
 			},
 		},
@@ -55,8 +59,9 @@ func TestBuilder_BuildController(t *testing.T) {
 					},
 					Spec: slinkyv1beta1.ControllerSpec{
 						Persistence: slinkyv1beta1.ControllerPersistence{
-							Enabled: true,
+							Enabled: ptr.To(true),
 						},
+						JwtKeyRef: &corev1.SecretKeySelector{},
 					},
 				},
 			},
@@ -73,9 +78,10 @@ func TestBuilder_BuildController(t *testing.T) {
 					},
 					Spec: slinkyv1beta1.ControllerSpec{
 						Persistence: slinkyv1beta1.ControllerPersistence{
-							Enabled:       true,
+							Enabled:       ptr.To(true),
 							ExistingClaim: "pvc",
 						},
+						JwtKeyRef: &corev1.SecretKeySelector{},
 					},
 				},
 			},

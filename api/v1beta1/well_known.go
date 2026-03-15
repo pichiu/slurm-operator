@@ -36,9 +36,9 @@ const (
 	// a NodeSet pod is scheduled is cordoned
 	AnnotationNodeCordonReason = NodeSetPrefix + "node-cordon-reason"
 
-	// AnnotationNodeTopologyLine indicates the Slurm dynamic topology line (e.g. "topo-switch:s2,topo-block:b2").
+	// AnnotationNodeTopologySpec indicates the Slurm dynamic topology line (e.g. "topo-switch:s2,topo-block:b2").
 	// Ref: https://slurm.schedmd.com/topology.html#dynamic_topo
-	AnnotationNodeTopologyLine = TopologyPrefix + "line"
+	AnnotationNodeTopologySpec = TopologyPrefix + "spec"
 )
 
 // Well Known Labels
@@ -58,4 +58,8 @@ const (
 	// LabelNodeSetPodProtect indicates whether the pod is protected against eviction using a PodDisruptionBudget
 	// NOTE: Set by the NodeSet controller
 	LabelNodeSetPodProtect = NodeSetPrefix + "pod-protect"
+
+	// LabelNodeSetScalingMode indicates the scaling mode (DaemonSet or StatefulSet).
+	// NOTE: Set by the NodeSet controller.
+	LabelNodeSetScalingMode = NodeSetPrefix + "scaling-mode"
 )

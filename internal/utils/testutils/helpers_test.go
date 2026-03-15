@@ -58,10 +58,10 @@ func TestNewObjectRef(t *testing.T) {
 
 func TestNewController(t *testing.T) {
 	type args struct {
-		name           string
-		slurmKeyRef    corev1.SecretKeySelector
-		jwtHs256KeyRef corev1.SecretKeySelector
-		accounting     *slinkyv1beta1.Accounting
+		name        string
+		slurmKeyRef corev1.SecretKeySelector
+		jwtKeyRef   corev1.SecretKeySelector
+		accounting  *slinkyv1beta1.Accounting
 	}
 	tests := []struct {
 		name string
@@ -70,25 +70,25 @@ func TestNewController(t *testing.T) {
 		{
 			name: "without accounting",
 			args: args{
-				name:           "foo",
-				slurmKeyRef:    NewSlurmKeyRef("foo"),
-				jwtHs256KeyRef: NewJwtHs256KeyRef("foo"),
-				accounting:     nil,
+				name:        "foo",
+				slurmKeyRef: NewSlurmKeyRef("foo"),
+				jwtKeyRef:   NewJwtKeyRef("foo"),
+				accounting:  nil,
 			},
 		},
 		{
 			name: "with accounting",
 			args: args{
-				name:           "foo",
-				slurmKeyRef:    NewSlurmKeyRef("foo"),
-				jwtHs256KeyRef: NewJwtHs256KeyRef("foo"),
-				accounting:     NewAccounting("foo", NewSlurmKeyRef("foo"), NewJwtHs256KeyRef("foo"), NewPasswordRef("name")),
+				name:        "foo",
+				slurmKeyRef: NewSlurmKeyRef("foo"),
+				jwtKeyRef:   NewJwtKeyRef("foo"),
+				accounting:  NewAccounting("foo", NewSlurmKeyRef("foo"), NewJwtKeyRef("foo"), NewPasswordRef("name")),
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewController(tt.args.name, tt.args.slurmKeyRef, tt.args.jwtHs256KeyRef, tt.args.accounting)
+			got := NewController(tt.args.name, tt.args.slurmKeyRef, tt.args.jwtKeyRef, tt.args.accounting)
 			switch {
 			case got == nil:
 				t.Error("returned object was nil")
@@ -152,7 +152,7 @@ func TestNewSlurmKeySecret(t *testing.T) {
 	}
 }
 
-func TestNewJwtHs256KeyRef(t *testing.T) {
+func TestNewJwtKeyRef(t *testing.T) {
 	type args struct {
 		name string
 	}
@@ -169,7 +169,7 @@ func TestNewJwtHs256KeyRef(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewJwtHs256KeyRef(tt.args.name)
+			got := NewJwtKeyRef(tt.args.name)
 			if !strings.Contains(got.Name, tt.args.name) {
 				t.Error("name does not match")
 			}
@@ -177,7 +177,7 @@ func TestNewJwtHs256KeyRef(t *testing.T) {
 	}
 }
 
-func TestNewJwtHs256KeySecret(t *testing.T) {
+func TestNewJwtKeySecret(t *testing.T) {
 	type args struct {
 		ref corev1.SecretKeySelector
 	}
@@ -188,13 +188,13 @@ func TestNewJwtHs256KeySecret(t *testing.T) {
 		{
 			name: "smoke",
 			args: args{
-				ref: NewJwtHs256KeyRef("foo"),
+				ref: NewJwtKeyRef("foo"),
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewJwtHs256KeySecret(tt.args.ref)
+			got := NewJwtKeySecret(tt.args.ref)
 			switch {
 			case got == nil:
 				t.Error("returned object was nil")
@@ -207,10 +207,10 @@ func TestNewJwtHs256KeySecret(t *testing.T) {
 
 func TestNewAccounting(t *testing.T) {
 	type args struct {
-		name           string
-		slurmKeyRef    corev1.SecretKeySelector
-		jwtHs256KeyRef corev1.SecretKeySelector
-		passwordRef    corev1.SecretKeySelector
+		name        string
+		slurmKeyRef corev1.SecretKeySelector
+		jwtKeyRef   corev1.SecretKeySelector
+		passwordRef corev1.SecretKeySelector
 	}
 	tests := []struct {
 		name string
@@ -219,15 +219,15 @@ func TestNewAccounting(t *testing.T) {
 		{
 			name: "smoke",
 			args: args{
-				name:           "foo",
-				slurmKeyRef:    NewSlurmKeyRef("foo"),
-				jwtHs256KeyRef: NewJwtHs256KeyRef("foo"),
+				name:        "foo",
+				slurmKeyRef: NewSlurmKeyRef("foo"),
+				jwtKeyRef:   NewJwtKeyRef("foo"),
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewAccounting(tt.args.name, tt.args.slurmKeyRef, tt.args.jwtHs256KeyRef, tt.args.passwordRef)
+			got := NewAccounting(tt.args.name, tt.args.slurmKeyRef, tt.args.jwtKeyRef, tt.args.passwordRef)
 			switch {
 			case got == nil:
 				t.Error("returned object was nil")
@@ -305,7 +305,7 @@ func TestNewNodeset(t *testing.T) {
 			name: "smoke",
 			args: args{
 				name:       "foo",
-				controller: NewController("foo", NewSlurmKeyRef("foo"), NewJwtHs256KeyRef("foo"), nil),
+				controller: NewController("foo", NewSlurmKeyRef("foo"), NewJwtKeyRef("foo"), nil),
 				replicas:   2,
 			},
 		},
@@ -339,7 +339,7 @@ func TestNewLoginset(t *testing.T) {
 			name: "smoke",
 			args: args{
 				name:        "foo",
-				controller:  NewController("foo", NewSlurmKeyRef("foo"), NewJwtHs256KeyRef("foo"), nil),
+				controller:  NewController("foo", NewSlurmKeyRef("foo"), NewJwtKeyRef("foo"), nil),
 				sssdConfRef: NewSssdConfRef("foo"),
 			},
 		},
@@ -423,7 +423,7 @@ func TestNewRestapi(t *testing.T) {
 			name: "smoke",
 			args: args{
 				name:       "foo",
-				controller: NewController("foo", NewSlurmKeyRef("foo"), NewJwtHs256KeyRef("foo"), nil),
+				controller: NewController("foo", NewSlurmKeyRef("foo"), NewJwtKeyRef("foo"), nil),
 			},
 		},
 	}

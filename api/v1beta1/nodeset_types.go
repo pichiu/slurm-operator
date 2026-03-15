@@ -13,6 +13,17 @@ const (
 	NodeSetKind = "NodeSet"
 )
 
+// ScalingModeType is a string enumeration of how a NodeSet scales its pods.
+// +enum
+type ScalingModeType string
+
+const (
+	// ScalingModeStatefulset indicates replica-based scaling similar to a StatefulSet.
+	ScalingModeStatefulset ScalingModeType = "StatefulSet"
+	// ScalingModeDaemonset indicates one pod per matching node similar to a DaemonSet.
+	ScalingModeDaemonset ScalingModeType = "DaemonSet"
+)
+
 var (
 	NodeSetGVK        = GroupVersion.WithKind(NodeSetKind)
 	NodeSetAPIVersion = GroupVersion.String()
@@ -28,8 +39,17 @@ type NodeSetSpec struct {
 	// These are replicas in the sense that they are instantiations of the
 	// same Template, but individual replicas also have a consistent identity.
 	// If unspecified, defaults to 1.
+	// When ScalingMode is daemonset, this field is ignored.
 	// +optional
+	// +default:=1
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// ScalingMode controls how the NodeSet scales pods.
+	// "StatefulSet" uses a fixed replica count; "DaemonSet" schedules one pod per matching node.
+	// +optional
+	// +kubebuilder:validation:Enum=DaemonSet;StatefulSet
+	// +kubebuilder:default:=StatefulSet
+	ScalingMode ScalingModeType `json:"scalingMode,omitempty"`
 
 	// The slurmd container configuration.
 	// See corev1.Container spec.
@@ -82,13 +102,14 @@ type NodeSetSpec struct {
 	// consists of all revisions not represented by a currently applied
 	// NodeSetSpec version. The default value is 0.
 	// +optional
-	RevisionHistoryLimit *int32 `json:"revisionHistoryLimit,omitempty"`
+	// +default:=0
+	RevisionHistoryLimit int32 `json:"revisionHistoryLimit,omitempty"`
 
 	// PersistentVolumeClaimRetentionPolicy describes the policy used for PVCs
 	// created from the NodeSet VolumeClaimTemplates. This requires the
 	// NodeSetAutoDeletePVC feature gate to be enabled, which is alpha.
 	// +optional
-	PersistentVolumeClaimRetentionPolicy *NodeSetPersistentVolumeClaimRetentionPolicy `json:"persistentVolumeClaimRetentionPolicy,omitempty"`
+	PersistentVolumeClaimRetentionPolicy NodeSetPersistentVolumeClaimRetentionPolicy `json:"persistentVolumeClaimRetentionPolicy,omitempty"`
 
 	// minReadySeconds is the minimum number of seconds for which a newly
 	// created NodeSet Pod should be ready without any of its container crashing,
@@ -97,7 +118,8 @@ type NodeSetSpec struct {
 	// +optional
 	MinReadySeconds int32 `json:"minReadySeconds,omitempty"`
 
-	// OrdinalPadding indicates how many places to pad with zeroes when constructing the ordinal.
+	// OrdinalPadding indicates how many digit places to pad with zeroes when constructing the pod ordinal.
+	// This is used only when `scalingMode=StatefulSet`.
 	// +optional
 	// +default:=0
 	OrdinalPadding uint `json:"ordinalPadding,omitempty"`
@@ -113,13 +135,13 @@ type NodeSetSpec struct {
 	// See https://kubernetes.io/docs/tasks/run-application/configure-pdb/ for more information.
 	// +optional
 	// +default:=true
-	WorkloadDisruptionProtection bool `json:"workloadDisruptionProtection,omitempty"`
+	WorkloadDisruptionProtection *bool `json:"workloadDisruptionProtection,omitempty"`
 }
 
 // NodeSetPartition defines the Slurm partition configuration for the NodeSet.
 type NodeSetPartition struct {
 	// Enabled will create a partition for this NodeSet.
-	// +default:=true
+	// +default:=false
 	Enabled bool `json:"enabled"`
 
 	// Config is added to the NodeSet's partition line.
@@ -149,14 +171,17 @@ type NodeSetSsh struct {
 // parameters necessary to perform the update for the indicated strategy.
 type NodeSetUpdateStrategy struct {
 	// Type indicates the type of the NodeSetUpdateStrategy.
+	// One of: RollingUpdate; OnDelete.
 	// Default is RollingUpdate.
 	// +optional
+	// +kubebuilder:validation:Enum=RollingUpdate;OnDelete
+	// +kubebuilder:default:=RollingUpdate
 	Type NodeSetUpdateStrategyType `json:"type,omitempty"`
 
 	// RollingUpdate is used to communicate parameters when Type is
 	// RollingUpdateNodeSetStrategyType.
 	// +optional
-	RollingUpdate *RollingUpdateNodeSetStrategy `json:"rollingUpdate,omitempty"`
+	RollingUpdate RollingUpdateNodeSetStrategy `json:"rollingUpdate,omitempty"`
 }
 
 // PersistentVolumeClaimRetentionPolicyType is a string enumeration of the policies that will determine
@@ -185,6 +210,8 @@ type NodeSetPersistentVolumeClaimRetentionPolicy struct {
 	// VolumeClaimTemplates when the NodeSet is deleted. The default policy
 	// of `Retain` causes PVCs to not be affected by NodeSet deletion. The
 	// `Delete` policy causes those PVCs to be deleted.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	// +kubebuilder:default:=Retain
 	WhenDeleted PersistentVolumeClaimRetentionPolicyType `json:"whenDeleted,omitempty"`
 
 	// WhenScaled specifies what happens to PVCs created from NodeSet
@@ -192,6 +219,8 @@ type NodeSetPersistentVolumeClaimRetentionPolicy struct {
 	// policy of `Retain` causes PVCs to not be affected by a scaledown. The
 	// `Delete` policy causes the associated PVCs for any excess pods to be
 	// deleted.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	// +kubebuilder:default:=Retain
 	WhenScaled PersistentVolumeClaimRetentionPolicyType `json:"whenScaled,omitempty"`
 }
 
@@ -217,8 +246,9 @@ type RollingUpdateNodeSetStrategy struct {
 	// The maximum number of pods that can be unavailable during the update.
 	// Value can be an absolute number (ex: 5) or a percentage of desired pods (ex: 10%).
 	// Absolute number is calculated from percentage by rounding up. This can not be 0.
-	// Defaults to 1.
+	// Defaults to 25%.
 	// +optional
+	// +kubebuilder:default:="25%"
 	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
 }
 
@@ -245,6 +275,12 @@ type NodeSetStatus struct {
 	// either be pods that are running but not yet available or pods that still have not been created.
 	// +optional
 	UnavailableReplicas int32 `json:"unavailableReplicas,omitempty"`
+
+	// Desired is the number of nodes that should be running a NodeSet pod.
+	// In DaemonSet scaling mode this is the number of nodes matching the node selector and tolerations.
+	// In StatefulSet scaling mode this is the number of replicas.
+	// +optional
+	Desired int32 `json:"desired,omitempty"`
 
 	// The number of NodeSet pods that are running and are in the Slurm IDLE
 	// state. IDLE means the Slurm nodes is not ALLOCATED or MIXED, hence is not
@@ -300,6 +336,7 @@ type NodeSetStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=nodesets;nss;slurmd
 // +kubebuilder:subresource:scale:specpath=".spec.replicas",statuspath=".status.replicas",selectorpath=".status.selector"
+// +kubebuilder:printcolumn:name="DESIRED",type="integer",JSONPath=".status.desired",priority=0,description="The number of nodes match the node selector and tolerations (DaemonSet mode) or replicas (StatefulSet mode)."
 // +kubebuilder:printcolumn:name="REPLICAS",type="integer",JSONPath=".status.replicas",priority=0,description="The current number of pods."
 // +kubebuilder:printcolumn:name="UPDATED",type="integer",JSONPath=".status.updatedReplicas",priority=0,description="The number of pods updated."
 // +kubebuilder:printcolumn:name="READY",type="integer",JSONPath=".status.readyReplicas",priority=0,description="The number of pods ready."

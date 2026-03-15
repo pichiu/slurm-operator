@@ -16,10 +16,10 @@ import (
 func TestBuilder_BuildControllerServiceMonitor(t *testing.T) {
 	name := "slurm"
 	slurmKeyRef := testutils.NewSlurmKeyRef(name)
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+	jwtKeyRef := testutils.NewJwtKeyRef(name)
 	slurmKeySecret := testutils.NewSlurmKeySecret(slurmKeyRef)
-	jwtHs256KeySecret := testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-	controller := testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeySecret := testutils.NewJwtKeySecret(jwtKeyRef)
+	controller := testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 	controller.Spec.Metrics.Enabled = true
 	controller.Spec.Metrics.ServiceMonitor.Enabled = true
 	type testCase struct {
@@ -31,7 +31,7 @@ func TestBuilder_BuildControllerServiceMonitor(t *testing.T) {
 	tests := []testCase{
 		func() testCase {
 			controller := controller.DeepCopy()
-			fakeClient := fake.NewFakeClient(slurmKeySecret, jwtHs256KeySecret, controller)
+			fakeClient := fake.NewFakeClient(slurmKeySecret, jwtKeySecret, controller)
 			return testCase{
 				name:       "default endpoints",
 				c:          fakeClient,
@@ -48,7 +48,7 @@ func TestBuilder_BuildControllerServiceMonitor(t *testing.T) {
 					ScrapeTimeout: "25s",
 				},
 			}
-			fakeClient := fake.NewFakeClient(slurmKeySecret, jwtHs256KeySecret, controller)
+			fakeClient := fake.NewFakeClient(slurmKeySecret, jwtKeySecret, controller)
 			return testCase{
 				name:       "custom endpoints",
 				c:          fakeClient,

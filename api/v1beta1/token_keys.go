@@ -50,7 +50,37 @@ func (o *Token) JwtHs256Ref() *JwtSecretKeySelector {
 	if ref.Namespace == "" {
 		ref.Namespace = o.Namespace
 	}
-	return &ref
+	return ref
+}
+
+func (o *Token) JwtKey() types.NamespacedName {
+	ref := o.Spec.JwtHs256KeyRef
+
+	if o.Spec.JwtKeyRef != nil {
+		ref = o.Spec.JwtKeyRef
+	}
+
+	namespace := ref.Namespace
+	if namespace == "" {
+		namespace = o.Namespace
+	}
+	return types.NamespacedName{
+		Name:      o.Spec.JwtKeyRef.Name,
+		Namespace: namespace,
+	}
+}
+
+func (o *Token) JwtRef() *JwtSecretKeySelector {
+	ref := o.Spec.JwtHs256KeyRef
+
+	if o.Spec.JwtKeyRef != nil {
+		ref = o.Spec.JwtKeyRef
+	}
+
+	if ref.Namespace == "" {
+		ref.Namespace = o.Namespace
+	}
+	return ref
 }
 
 func (o *Token) SecretKey() types.NamespacedName {

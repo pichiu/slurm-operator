@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: nodesets.slinky.slurm.net
 spec:
   group: slinky.slurm.net
@@ -19,6 +19,11 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - description: The number of nodes match the node selector and tolerations (DaemonSet
+        mode) or replicas (StatefulSet mode).
+      jsonPath: .status.desired
+      name: DESIRED
+      type: integer
     - description: The current number of pods.
       jsonPath: .status.replicas
       name: REPLICAS
@@ -114,8 +119,9 @@ spec:
                 type: integer
               ordinalPadding:
                 default: 0
-                description: OrdinalPadding indicates how many places to pad with
-                  zeroes when constructing the ordinal.
+                description: |-
+                  OrdinalPadding indicates how many digit places to pad with zeroes when constructing the pod ordinal.
+                  This is used only when `scalingMode=StatefulSet`.
                 type: integer
               partition:
                 description: Partition defines the Slurm partition configuration for
@@ -127,7 +133,7 @@ spec:
                       Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION
                     type: string
                   enabled:
-                    default: true
+                    default: false
                     description: Enabled will create a partition for this NodeSet.
                     type: boolean
                 required:
@@ -140,30 +146,41 @@ spec:
                   NodeSetAutoDeletePVC feature gate to be enabled, which is alpha.
                 properties:
                   whenDeleted:
+                    default: Retain
                     description: |-
                       WhenDeleted specifies what happens to PVCs created from NodeSet
                       VolumeClaimTemplates when the NodeSet is deleted. The default policy
                       of `Retain` causes PVCs to not be affected by NodeSet deletion. The
                       `Delete` policy causes those PVCs to be deleted.
+                    enum:
+                    - Retain
+                    - Delete
                     type: string
                   whenScaled:
+                    default: Retain
                     description: |-
                       WhenScaled specifies what happens to PVCs created from NodeSet
                       VolumeClaimTemplates when the NodeSet is scaled down. The default
                       policy of `Retain` causes PVCs to not be affected by a scaledown. The
                       `Delete` policy causes the associated PVCs for any excess pods to be
                       deleted.
+                    enum:
+                    - Retain
+                    - Delete
                     type: string
                 type: object
               replicas:
+                default: 1
                 description: |-
                   replicas is the desired number of replicas of the given Template.
                   These are replicas in the sense that they are instantiations of the
                   same Template, but individual replicas also have a consistent identity.
                   If unspecified, defaults to 1.
+                  When ScalingMode is daemonset, this field is ignored.
                 format: int32
                 type: integer
               revisionHistoryLimit:
+                default: 0
                 description: |-
                   revisionHistoryLimit is the maximum number of revisions that will
                   be maintained in the NodeSet's revision history. The revision history
@@ -171,6 +188,15 @@ spec:
                   NodeSetSpec version. The default value is 0.
                 format: int32
                 type: integer
+              scalingMode:
+                default: StatefulSet
+                description: |-
+                  ScalingMode controls how the NodeSet scales pods.
+                  "StatefulSet" uses a fixed replica count; "DaemonSet" schedules one pod per matching node.
+                enum:
+                - DaemonSet
+                - StatefulSet
+                type: string
               slurmd:
                 description: |-
                   The slurmd container configuration.
@@ -278,17 +304,23 @@ spec:
                         anyOf:
                         - type: integer
                         - type: string
+                        default: 25%
                         description: |-
                           The maximum number of pods that can be unavailable during the update.
                           Value can be an absolute number (ex: 5) or a percentage of desired pods (ex: 10%).
                           Absolute number is calculated from percentage by rounding up. This can not be 0.
-                          Defaults to 1.
+                          Defaults to 25%.
                         x-kubernetes-int-or-string: true
                     type: object
                   type:
+                    default: RollingUpdate
                     description: |-
                       Type indicates the type of the NodeSetUpdateStrategy.
+                      One of: RollingUpdate; OnDelete.
                       Default is RollingUpdate.
+                    enum:
+                    - RollingUpdate
+                    - OnDelete
                     type: string
                 type: object
               volumeClaimTemplates:
@@ -387,6 +419,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              desired:
+                description: |-
+                  Desired is the number of nodes that should be running a NodeSet pod.
+                  In DaemonSet scaling mode this is the number of nodes matching the node selector and tolerations.
+                  In StatefulSet scaling mode this is the number of replicas.
+                format: int32
+                type: integer
               nodeSetHash:
                 description: |-
                   NodeSetHash is the "controller-revision-hash", which represents the

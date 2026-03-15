@@ -47,6 +47,7 @@ func TestBuilder_BuildAccountingService(t *testing.T) {
 						Name: "slurm",
 					},
 					Spec: slinkyv1beta1.AccountingSpec{
+						JwtKeyRef: &corev1.SecretKeySelector{},
 						StorageConfig: slinkyv1beta1.StorageConfig{
 							PasswordKeyRef: corev1.SecretKeySelector{
 								LocalObjectReference: corev1.LocalObjectReference{

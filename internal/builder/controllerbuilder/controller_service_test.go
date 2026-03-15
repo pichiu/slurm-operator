@@ -38,6 +38,9 @@ func TestBuilder_BuildControllerService(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "slurm",
 					},
+					Spec: slinkyv1beta1.ControllerSpec{
+						JwtKeyRef: &corev1.SecretKeySelector{},
+					},
 				},
 			},
 		},

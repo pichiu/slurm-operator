@@ -11,9 +11,9 @@ manifest should match snapshot:
       name: test-release-slurm
       namespace: test-namespace
     spec:
-      jwtHs256KeyRef:
-        key: jwt_hs256.key
-        name: test-release-slurm-auth-jwths256
+      jwtKeyRef:
+        key: jwt.key
+        name: test-release-slurm-auth-jwt
       service:
         metadata: {}
         spec: {}

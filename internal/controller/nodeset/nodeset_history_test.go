@@ -41,7 +41,6 @@ func TestNodeSetReconciler_truncateHistory(t *testing.T) {
 	tests := []testCaseFields{
 		func() testCaseFields {
 			nodeset := newNodeSet("foo", clusterName, 0)
-			nodeset.Spec.RevisionHistoryLimit = ptr.To[int32](0)
 			revisionList := &appsv1.ControllerRevisionList{
 				Items: []appsv1.ControllerRevision{
 					{ObjectMeta: metav1.ObjectMeta{Name: "rev-0"}},
@@ -68,7 +67,7 @@ func TestNodeSetReconciler_truncateHistory(t *testing.T) {
 		}(),
 		func() testCaseFields {
 			nodeset := newNodeSet("foo", clusterName, 3)
-			nodeset.Spec.RevisionHistoryLimit = ptr.To[int32](2)
+			nodeset.Spec.RevisionHistoryLimit = 2
 			podList := &corev1.PodList{
 				Items: []corev1.Pod{
 					{

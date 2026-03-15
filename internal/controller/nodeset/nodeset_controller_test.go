@@ -68,17 +68,17 @@ var _ = Describe("Slurm NodeSet", func() {
 		var nodeset *slinkyv1beta1.NodeSet
 		var controller *slinkyv1beta1.Controller
 		var slurmKeySecret *corev1.Secret
-		var jwtHs256KeySecret *corev1.Secret
+		var jwtKeySecret *corev1.Secret
 
 		BeforeEach(func() {
 			slurmKeyRef := testutils.NewSlurmKeyRef(name)
-			jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+			jwtKeyRef := testutils.NewJwtKeyRef(name)
 			slurmKeySecret = testutils.NewSlurmKeySecret(slurmKeyRef)
-			jwtHs256KeySecret = testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-			controller = testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+			jwtKeySecret = testutils.NewJwtKeySecret(jwtKeyRef)
+			controller = testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 			nodeset = testutils.NewNodeset(name, controller, 0)
 			Expect(k8sClient.Create(ctx, slurmKeySecret.DeepCopy())).To(Succeed())
-			Expect(k8sClient.Create(ctx, jwtHs256KeySecret.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, jwtKeySecret.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, controller.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, nodeset.DeepCopy())).To(Succeed())
 		})
@@ -87,7 +87,7 @@ var _ = Describe("Slurm NodeSet", func() {
 			_ = k8sClient.Delete(ctx, nodeset)
 			_ = k8sClient.Delete(ctx, controller)
 			_ = k8sClient.Delete(ctx, slurmKeySecret)
-			_ = k8sClient.Delete(ctx, jwtHs256KeySecret)
+			_ = k8sClient.Delete(ctx, jwtKeySecret)
 		})
 
 		It("Should successfully create create a nodeset", func(ctx SpecContext) {
@@ -117,17 +117,17 @@ var _ = Describe("Slurm NodeSet", func() {
 		var nodeset *slinkyv1beta1.NodeSet
 		var controller *slinkyv1beta1.Controller
 		var slurmKeySecret *corev1.Secret
-		var jwtHs256KeySecret *corev1.Secret
+		var jwtKeySecret *corev1.Secret
 
 		BeforeEach(func() {
 			slurmKeyRef := testutils.NewSlurmKeyRef(name)
-			jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+			jwtKeyRef := testutils.NewJwtKeyRef(name)
 			slurmKeySecret = testutils.NewSlurmKeySecret(slurmKeyRef)
-			jwtHs256KeySecret = testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-			controller = testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+			jwtKeySecret = testutils.NewJwtKeySecret(jwtKeyRef)
+			controller = testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 			nodeset = testutils.NewNodeset(name, controller, 0)
 			Expect(k8sClient.Create(ctx, slurmKeySecret.DeepCopy())).To(Succeed())
-			Expect(k8sClient.Create(ctx, jwtHs256KeySecret.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, jwtKeySecret.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, controller.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, nodeset.DeepCopy())).To(Succeed())
 		})
@@ -136,7 +136,7 @@ var _ = Describe("Slurm NodeSet", func() {
 			_ = k8sClient.Delete(ctx, nodeset)
 			_ = k8sClient.Delete(ctx, controller)
 			_ = k8sClient.Delete(ctx, slurmKeySecret)
-			_ = k8sClient.Delete(ctx, jwtHs256KeySecret)
+			_ = k8sClient.Delete(ctx, jwtKeySecret)
 		})
 
 		It("Should scale replicas", func(ctx SpecContext) {
@@ -178,17 +178,17 @@ var _ = Describe("Slurm NodeSet", func() {
 		var nodeset *slinkyv1beta1.NodeSet
 		var controller *slinkyv1beta1.Controller
 		var slurmKeySecret *corev1.Secret
-		var jwtHs256KeySecret *corev1.Secret
+		var jwtKeySecret *corev1.Secret
 
 		BeforeEach(func() {
 			slurmKeyRef := testutils.NewSlurmKeyRef(name)
-			jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+			jwtKeyRef := testutils.NewJwtKeyRef(name)
 			slurmKeySecret = testutils.NewSlurmKeySecret(slurmKeyRef)
-			jwtHs256KeySecret = testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-			controller = testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+			jwtKeySecret = testutils.NewJwtKeySecret(jwtKeyRef)
+			controller = testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 			nodeset = testutils.NewNodeset(name, controller, 0)
 			Expect(k8sClient.Create(ctx, slurmKeySecret.DeepCopy())).To(Succeed())
-			Expect(k8sClient.Create(ctx, jwtHs256KeySecret.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, jwtKeySecret.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, controller.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, nodeset.DeepCopy())).To(Succeed())
 		})
@@ -197,7 +197,7 @@ var _ = Describe("Slurm NodeSet", func() {
 			_ = k8sClient.Delete(ctx, nodeset)
 			_ = k8sClient.Delete(ctx, controller)
 			_ = k8sClient.Delete(ctx, slurmKeySecret)
-			_ = k8sClient.Delete(ctx, jwtHs256KeySecret)
+			_ = k8sClient.Delete(ctx, jwtKeySecret)
 		})
 
 		It("Should scale replicas", func(ctx SpecContext) {
@@ -221,7 +221,7 @@ var _ = Describe("Slurm NodeSet", func() {
 				// Register Slurm node for pod
 				node := slurmtypes.V0044Node{
 					V0044Node: slurmapi.V0044Node{
-						Name:  ptr.To(nodesetutils.GetNodeName(&pod)),
+						Name:  ptr.To(nodesetutils.GetSlurmNodeName(&pod)),
 						State: ptr.To([]slurmapi.V0044NodeState{slurmapi.V0044NodeStateIDLE}),
 					},
 				}

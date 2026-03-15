@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
+	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 )
 
@@ -34,6 +35,8 @@ func (r *AccountingReconciler) Sync(ctx context.Context, req reconcile.Request) 
 		}
 		return err
 	}
+	cluster = cluster.DeepCopy()
+	defaults.SetAccountingDefaults(cluster)
 
 	syncSteps := []SyncStep{
 		{

@@ -12,7 +12,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/kubernetes/pkg/controller/history"
-	"k8s.io/utils/ptr"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/historycontrol"
@@ -53,7 +52,7 @@ func (r *NodeSetReconciler) truncateHistory(
 		}
 	}
 	historyLen := len(history)
-	historyLimit := int(ptr.Deref(nodeset.Spec.RevisionHistoryLimit, 0))
+	historyLimit := int(nodeset.Spec.RevisionHistoryLimit)
 	if historyLen <= historyLimit {
 		return nil
 	}
@@ -189,11 +188,14 @@ func getPatch(nodeset *slinkyv1beta1.NodeSet) ([]byte, error) {
 	objCopy := make(map[string]any)
 	specCopy := make(map[string]any)
 
-	// Create a patch of the NodeSet that replaces spec.template
 	spec := raw["spec"].(map[string]any)
 	template := spec["template"].(map[string]any)
 	specCopy["template"] = template
 	template["$patch"] = "replace"
+
+	// NOTE: Anything outside of pod template but should be included in the
+	// revision patch must be manually added here.
+	specCopy["ordinalPadding"] = nodeset.Spec.OrdinalPadding
 	if slurmd, ok := spec["slurmd"].(map[string]any); ok {
 		slurmd["$patch"] = "replace"
 		specCopy["slurmd"] = slurmd
@@ -209,6 +211,7 @@ func getPatch(nodeset *slinkyv1beta1.NodeSet) ([]byte, error) {
 		ssh["$patch"] = "replace"
 		specCopy["ssh"] = ssh
 	}
+
 	objCopy["spec"] = specCopy
 	patch, err := json.Marshal(objCopy)
 	return patch, err

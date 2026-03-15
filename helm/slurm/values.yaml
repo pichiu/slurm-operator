@@ -50,7 +50,7 @@ slurmKey:
     # name: slurm-auth-slurm
     # key: slurm.key
 
-# -- Slurm cluster JWT HS256 authentication key.
+# -- Slurm cluster JWT authentication key.
 # Ref: https://slurm.schedmd.com/authentication.html#jwt
 jwtKey:
   # -- The secret will be created when true.
@@ -60,8 +60,8 @@ jwtKey:
     # helm.sh/resource-policy: keep
   # -- (secretKeyRef) Reference to the secret.
   secretRef: {}
-    # name: slurm-auth-jwths256
-    # key: jwt_hs256.key
+    # name: slurm-auth-jwt
+    # key: jwt.key
 
 # -- Slurm cluster JWKS authentication keys.
 # Ref: https://slurm.schedmd.com/jwt.html#external_auth
@@ -541,6 +541,13 @@ loginsets:
     enabled: false
     # -- Number of replicas to deploy.
     replicas: 1
+    # -- Deployment strategy configuration.
+    # Ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy
+    strategy: {}
+      # type: RollingUpdate
+      # rollingUpdate:
+      #   maxUnavailable: 0
+      #   maxSurge: 1
     # login container configurations.
     login:
       # -- (string \| object) The image to use.
@@ -646,7 +653,9 @@ nodesets:
   slinky:
     # -- Enable use of this NodeSet.
     enabled: true
-    # -- Number of replicas to deploy.
+    # -- Scaling mode: "StatefulSet" (fixed replica count) or "DaemonSet" (one pod per matching node).
+    scalingMode: StatefulSet
+    # -- Number of replicas to deploy. Ignored when scalingMode is daemonset.
     replicas: 1
     # -- Taint the Kubernetes nodes on which nodeset pods are scheduled with NoExecute.
     taintKubeNodes: false
@@ -709,7 +718,7 @@ nodesets:
     # Partition configuration for this NodeSet.
     partition:
       # -- Enable NodeSet partition creation.
-      enabled: true
+      enabled: false
       # -- (string) Raw Slurm partition configuration options added to the partition line added to the partition line.
       # Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION
       config: null

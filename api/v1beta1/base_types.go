@@ -49,7 +49,7 @@ type JwtSecretKeySelector struct {
 	// +structType=atomic
 	corev1.SecretKeySelector `json:",inline"`
 
-	// The namespace of the Slurm `auth/jwt` JWT HS256 key.
+	// The namespace of the Slurm `auth/jwt` JWT key.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 }

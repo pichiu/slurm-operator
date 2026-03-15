@@ -17,18 +17,18 @@ var _ = Describe("Token Controller", func() {
 	Context("When reconciling a Token", func() {
 		var name = testutils.GenerateResourceName(5)
 		var token *slinkyv1beta1.Token
-		var jwtHs256KeySecret *corev1.Secret
+		var jwtKeySecret *corev1.Secret
 
 		BeforeEach(func() {
-			jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
-			jwtHs256KeySecret = testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-			token = testutils.NewToken(name, jwtHs256KeySecret)
-			Expect(k8sClient.Create(ctx, jwtHs256KeySecret.DeepCopy())).To(Succeed())
+			jwtKeyRef := testutils.NewJwtKeyRef(name)
+			jwtKeySecret = testutils.NewJwtKeySecret(jwtKeyRef)
+			token = testutils.NewToken(name, jwtKeySecret)
+			Expect(k8sClient.Create(ctx, jwtKeySecret.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, token.DeepCopy())).To(Succeed())
 		})
 
 		AfterEach(func() {
-			_ = k8sClient.Delete(ctx, jwtHs256KeySecret)
+			_ = k8sClient.Delete(ctx, jwtKeySecret)
 			_ = k8sClient.Delete(ctx, token)
 		})
 

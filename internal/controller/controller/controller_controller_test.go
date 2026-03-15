@@ -20,23 +20,23 @@ var _ = Describe("Slurm Controller", func() {
 		var name = testutils.GenerateResourceName(5)
 		var controller *slinkyv1beta1.Controller
 		var slurmKeySecret *corev1.Secret
-		var jwtHs256KeySecret *corev1.Secret
+		var jwtKeySecret *corev1.Secret
 
 		BeforeEach(func() {
 			slurmKeyRef := testutils.NewSlurmKeyRef(name)
-			jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+			jwtKeyRef := testutils.NewJwtKeyRef(name)
 			slurmKeySecret = testutils.NewSlurmKeySecret(slurmKeyRef)
-			jwtHs256KeySecret = testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-			controller = testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+			jwtKeySecret = testutils.NewJwtKeySecret(jwtKeyRef)
+			controller = testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 			Expect(k8sClient.Create(ctx, slurmKeySecret.DeepCopy())).To(Succeed())
-			Expect(k8sClient.Create(ctx, jwtHs256KeySecret.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, jwtKeySecret.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, controller.DeepCopy())).To(Succeed())
 		})
 
 		AfterEach(func() {
 			_ = k8sClient.Delete(ctx, controller)
 			_ = k8sClient.Delete(ctx, slurmKeySecret)
-			_ = k8sClient.Delete(ctx, jwtHs256KeySecret)
+			_ = k8sClient.Delete(ctx, jwtKeySecret)
 		})
 
 		It("Should successfully create create a controller", func(ctx SpecContext) {

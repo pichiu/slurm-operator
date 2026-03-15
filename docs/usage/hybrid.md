@@ -43,11 +43,11 @@ kubectl create secret generic external-auth-slurm \
   --namespace=slurm --from-file="slurm.key=/etc/slurm/slurm.key"
 ```
 
-Store `jwt_hs256.key` as a secret in Kubernetes.
+Store `jwt.key` as a secret in Kubernetes.
 
 ```sh
-kubectl create secret generic external-auth-jwths256 \
-  --namespace=slurm --from-file="jwt_hs256.key=/etc/slurm/jwt_hs256.key"
+kubectl create secret generic external-auth-jwt \
+  --namespace=slurm --from-file="jwt.key=/etc/slurm/jwt.key"
 ```
 
 ## Networking
@@ -113,11 +113,11 @@ kubectl create secret generic external-auth-slurm \
   --namespace=slurm --from-file="slurm.key=/etc/slurm/slurm.key"
 ```
 
-Copy `jwt_hs256.key` as a secret in Kubernetes.
+Copy `jwt.key` as a secret in Kubernetes.
 
 ```sh
-kubectl create secret generic external-auth-jwths256 \
-  --namespace=slurm --from-file="jwt_hs256.key=/etc/slurm/jwt_hs256.key"
+kubectl create secret generic external-auth-jwt \
+  --namespace=slurm --from-file="jwt.key=/etc/slurm/jwt.key"
 ```
 
 When configuring the Slurm helm chart, set the Slurm key and JWT key to the
@@ -128,9 +128,9 @@ unable to authenticate with the rest of the Slurm cluster.
 slurmKeyRef:
   name: external-auth-slurm
   key: slurm.key
-jwtHs256KeyRef:
-  name: external-auth-jwths256
-  key: jwt_hs256.key
+jwtKeyRef:
+  name: external-auth-jwt
+  key: jwt.key
 ```
 
 > [!WARNING]

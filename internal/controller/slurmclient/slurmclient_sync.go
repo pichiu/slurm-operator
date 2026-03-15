@@ -50,7 +50,7 @@ func (r *SlurmClientReconciler) Sync(ctx context.Context, req reconcile.Request)
 		return err
 	}
 
-	signingKey, err := r.refResolver.GetSecretKeyRef(ctx, controller.AuthJwtHs256Ref(), controller.Namespace)
+	signingKey, err := r.refResolver.GetSecretKeyRef(ctx, controller.AuthJwtRef(), controller.Namespace)
 	if err != nil {
 		return err
 	}

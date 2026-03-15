@@ -31,11 +31,9 @@ Installation instructions for the Slurm Operator on Kubernetes.
 Install the [cert-manager] with its CRDs, if not already installed:
 
 ```sh
-helm repo add jetstack https://charts.jetstack.io
-helm repo update
-helm install cert-manager jetstack/cert-manager \
-  --set 'crds.enabled=true' \
-  --namespace cert-manager --create-namespace
+helm install "$chartName" oci://quay.io/jetstack/charts/cert-manager \
+  --namespace cert-manager --create-namespace \
+  --set 'crds.enabled=true'
 ```
 
 Install the slurm-operator and its CRDs:

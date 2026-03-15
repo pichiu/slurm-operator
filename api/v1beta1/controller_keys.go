@@ -92,6 +92,34 @@ func (o *Controller) AuthJwtHs256Ref() *corev1.SecretKeySelector {
 	}
 }
 
+func (o *Controller) AuthJwtKey() types.NamespacedName {
+	ref := o.Spec.JwtHs256KeyRef
+
+	if o.Spec.JwtKeyRef != nil {
+		ref = o.Spec.JwtKeyRef
+	}
+
+	return types.NamespacedName{
+		Name:      ref.Name,
+		Namespace: o.Namespace,
+	}
+}
+
+func (o *Controller) AuthJwtRef() *corev1.SecretKeySelector {
+	ref := o.Spec.JwtHs256KeyRef
+
+	if o.Spec.JwtKeyRef != nil {
+		ref = o.Spec.JwtKeyRef
+	}
+
+	return &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{
+			Name: ref.Name,
+		},
+		Key: ref.Key,
+	}
+}
+
 func (o *Controller) AuthJwksKey() types.NamespacedName {
 	return types.NamespacedName{
 		Name:      o.Spec.JwksKeyRef.Name,

@@ -10,10 +10,12 @@ import (
 	"maps"
 	"regexp"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8scontroller "k8s.io/kubernetes/pkg/controller"
+	daemonutils "k8s.io/kubernetes/pkg/controller/daemon/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -23,8 +25,8 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/utils/historycontrol"
 )
 
-// NewNodeSetPod returns a new Pod conforming to the nodeset's Spec with an identity generated from ordinal.
-func NewNodeSetPod(
+// NewNodeSetStatefulSetPod returns a new Pod conforming to the nodeset's Spec with an identity generated from ordinal.
+func NewNodeSetStatefulSetPod(
 	client client.Client,
 	nodeset *slinkyv1beta1.NodeSet,
 	controller *slinkyv1beta1.Controller,
@@ -34,7 +36,7 @@ func NewNodeSetPod(
 	controllerRef := metav1.NewControllerRef(nodeset, slinkyv1beta1.NodeSetGVK)
 	podTemplate := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
 	pod, _ := k8scontroller.GetPodFromTemplate(&podTemplate, nodeset, controllerRef)
-	pod.Name = GetPodName(nodeset, ordinal)
+	pod.Name = GetOrdinalPodName(nodeset, ordinal)
 	initIdentity(nodeset, pod)
 	UpdateStorage(nodeset, pod)
 
@@ -53,32 +55,89 @@ func NewNodeSetPod(
 	return pod
 }
 
+func NewNodeSetDaemonSetPod(
+	client client.Client,
+	nodeset *slinkyv1beta1.NodeSet,
+	controller *slinkyv1beta1.Controller,
+	nodeName string,
+	revisionHash string,
+) *corev1.Pod {
+	controllerRef := metav1.NewControllerRef(nodeset, slinkyv1beta1.NodeSetGVK)
+	podTemplate := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
+	pod, _ := k8scontroller.GetPodFromTemplate(&podTemplate, nodeset, controllerRef)
+
+	// Ensure the hostname is RFC 1178 compliant
+	safeHostname := getDaemonSetPodHostname(nodeset, nodeName)
+	pod.Spec.Hostname = safeHostname
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+
+	initIdentity(nodeset, pod)
+	UpdateStorage(nodeset, pod)
+
+	if revisionHash != "" {
+		historycontrol.SetRevision(pod.Labels, revisionHash)
+	}
+
+	// The pod's PodAntiAffinity will be updated to make sure the Pod is not
+	// scheduled on the same Node as another NodeSet pod.
+	pod.Spec.Affinity = updateNodeSetPodAntiAffinity(pod.Spec.Affinity)
+
+	// WARNING: Do not use the spec.NodeName otherwise the Pod scheduler will
+	// be avoided and priorityClass will not be honored.
+	pod.Spec.NodeName = ""
+
+	pod.GenerateName = nodeset.Name + "-"
+	pod.Name = ""
+	pod.Spec.Affinity = daemonutils.ReplaceDaemonSetPodNodeNameNodeAffinity(pod.Spec.Affinity, nodeName)
+
+	return pod
+}
+
+func getDaemonSetPodHostname(nodeset *slinkyv1beta1.NodeSet, nodeName string) string {
+	name := nodeName
+	if before, _, ok := strings.Cut(nodeName, "."); ok {
+		name = before
+	}
+	name = strings.TrimSuffix(name, "-")
+	if nodeset.Spec.Template.PodSpecWrapper.Hostname != "" {
+		prefix := strings.TrimSuffix(nodeset.Spec.Template.PodSpecWrapper.Hostname, "-")
+		return fmt.Sprintf("%s-%s", prefix, name)
+	}
+	return fmt.Sprintf("%s-%s", nodeset.Name, name)
+}
+
 func initIdentity(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) {
 	UpdateIdentity(nodeset, pod)
 	// Set these immutable fields only on initial Pod creation, not updates.
-	if pod.Spec.Hostname != "" {
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
 		ordinal := GetOrdinal(pod)
 		paddedOrdinal := GetPaddedOrdinal(nodeset, ordinal)
-		pod.Spec.Hostname = fmt.Sprintf("%s%s", pod.Spec.Hostname, paddedOrdinal)
-	} else {
-		pod.Spec.Hostname = pod.Name
+		pod.Name = GetOrdinalPodName(nodeset, ordinal)
+		if pod.Spec.Hostname != "" {
+			pod.Spec.Hostname = fmt.Sprintf("%s%s", pod.Spec.Hostname, paddedOrdinal)
+		} else {
+			pod.Spec.Hostname = pod.Name
+		}
 	}
-	pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname] = GetNodeName(pod)
+	pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname] = GetSlurmNodeName(pod)
+	pod.Labels[slinkyv1beta1.LabelNodeSetScalingMode] = string(nodeset.Spec.ScalingMode)
 }
 
-// UpdateIdentity updates pod's name, hostname, and subdomain, and StatefulSetPodNameLabel to conform to nodeset's name
-// and headless service.
+// UpdateIdentity updates pod's labels.
 func UpdateIdentity(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) {
-	ordinal := GetOrdinal(pod)
-	paddedOrdinal := GetPaddedOrdinal(nodeset, ordinal)
-	pod.Name = GetPodName(nodeset, ordinal)
 	pod.Namespace = nodeset.Namespace
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
 	}
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		ordinal := GetOrdinal(pod)
+		paddedOrdinal := GetPaddedOrdinal(nodeset, ordinal)
+		pod.Labels[slinkyv1beta1.LabelNodeSetPodIndex] = paddedOrdinal
+	}
 	pod.Labels[slinkyv1beta1.LabelNodeSetPodName] = pod.Name
-	pod.Labels[slinkyv1beta1.LabelNodeSetPodIndex] = paddedOrdinal
-	pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname] = GetNodeName(pod)
+	pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname] = GetSlurmNodeName(pod)
 }
 
 // UpdateStorage updates pod's Volumes to conform with the PersistentVolumeClaim of nodeset's templates. If pod has
@@ -164,12 +223,6 @@ func IsPodFromNodeSet(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) bool {
 	return found
 }
 
-// GetParentName gets the name of pod's parent NodeSet. If pod has not parent, the empty string is returned.
-func GetParentName(pod *corev1.Pod) string {
-	parent, _ := GetParentNameAndOrdinal(pod)
-	return parent
-}
-
 // GetOrdinal gets pod's ordinal. If pod has no ordinal, -1 is returned.
 func GetOrdinal(pod *corev1.Pod) int {
 	_, ordinal := GetParentNameAndOrdinal(pod)
@@ -202,39 +255,50 @@ func GetPaddedOrdinal(nodeset *slinkyv1beta1.NodeSet, ordinal int) string {
 	return fmt.Sprintf(format, ordinal)
 }
 
-// GetPodName gets the name of nodeset's child Pod with an ordinal index of ordinal
-func GetPodName(nodeset *slinkyv1beta1.NodeSet, ordinal int) string {
+// GetOrdinalPodName gets the name of nodeset's child Pod with an ordinal index of ordinal
+func GetOrdinalPodName(nodeset *slinkyv1beta1.NodeSet, ordinal int) string {
 	paddedOrdinal := GetPaddedOrdinal(nodeset, ordinal)
 	return fmt.Sprintf("%s-%s", nodeset.Name, paddedOrdinal)
 }
 
-// GetNodeName returns the Slurm node name
-func GetNodeName(pod *corev1.Pod) string {
-	if pod.Spec.HostNetwork {
-		return pod.Spec.NodeName
-	}
-	if pod.Spec.Hostname != "" {
+// GetSlurmNodeName returns the Slurm node name.
+func GetSlurmNodeName(pod *corev1.Pod) string {
+	if pod.Labels[slinkyv1beta1.LabelNodeSetScalingMode] == string(slinkyv1beta1.ScalingModeStatefulset) {
+		if pod.Spec.HostNetwork {
+			return pod.Spec.NodeName
+		}
+		if pod.Spec.Hostname != "" {
+			return pod.Spec.Hostname
+		}
+		return pod.Name
+	} else {
 		return pod.Spec.Hostname
 	}
-	return pod.Name
 }
 
 // IsIdentityMatch returns true if pod has a valid identity and network identity for a member of nodeset.
 func IsIdentityMatch(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) bool {
-	parent, ordinal := GetParentNameAndOrdinal(pod)
-	return ordinal >= 0 &&
-		nodeset.Name == parent &&
-		pod.Name == GetPodName(nodeset, ordinal) &&
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		parent, ordinal := GetParentNameAndOrdinal(pod)
+		return ordinal >= 0 &&
+			nodeset.Name == parent &&
+			pod.Namespace == nodeset.Namespace &&
+			pod.Labels[slinkyv1beta1.LabelNodeSetPodName] == pod.Name
+	}
+	return nodeset.Name == strings.TrimSuffix(pod.GenerateName, "-") &&
 		pod.Namespace == nodeset.Namespace &&
 		pod.Labels[slinkyv1beta1.LabelNodeSetPodName] == pod.Name
 }
 
 // IsStorageMatch returns true if pod's Volumes cover the nodeset of PersistentVolumeClaims
 func IsStorageMatch(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) bool {
-	ordinal := GetOrdinal(pod)
-	paddedOrdinal := GetPaddedOrdinal(nodeset, ordinal)
-	if ordinal < 0 {
-		return false
+	var paddedOrdinal string
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		ordinal := GetOrdinal(pod)
+		paddedOrdinal = GetPaddedOrdinal(nodeset, ordinal)
+		if ordinal < 0 {
+			return false
+		}
 	}
 	volumes := make(map[string]corev1.Volume, len(pod.Spec.Volumes))
 	for _, volume := range pod.Spec.Volumes {
@@ -242,11 +306,20 @@ func IsStorageMatch(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) bool {
 	}
 	for _, claim := range nodeset.Spec.VolumeClaimTemplates {
 		volume, found := volumes[claim.Name]
-		if !found ||
-			volume.PersistentVolumeClaim == nil ||
-			volume.PersistentVolumeClaim.ClaimName !=
-				GetPersistentVolumeClaimName(nodeset, &claim, paddedOrdinal) {
-			return false
+		if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+			if !found ||
+				volume.PersistentVolumeClaim == nil ||
+				volume.PersistentVolumeClaim.ClaimName !=
+					GetPersistentVolumeClaimNameOrdinal(nodeset, &claim, paddedOrdinal) {
+				return false
+			}
+		} else {
+			if !found ||
+				volume.PersistentVolumeClaim == nil ||
+				volume.PersistentVolumeClaim.ClaimName !=
+					GetPersistentVolumeClaimNameNodeName(nodeset, &claim, pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname]) {
+				return false
+			}
 		}
 	}
 	return true
@@ -256,14 +329,21 @@ func IsStorageMatch(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) bool {
 // returned PersistentVolumeClaims are each constructed with a the name specific to the Pod. This name is determined
 // by GetPersistentVolumeClaimName.
 func GetPersistentVolumeClaims(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) map[string]corev1.PersistentVolumeClaim {
-	ordinal := GetOrdinal(pod)
-	paddedOrdinal := GetPaddedOrdinal(nodeset, ordinal)
+	var paddedOrdinal string
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		ordinal := GetOrdinal(pod)
+		paddedOrdinal = GetPaddedOrdinal(nodeset, ordinal)
+	}
 	templates := nodeset.Spec.VolumeClaimTemplates
 	selectorLabels := labels.NewBuilder().WithWorkerSelectorLabels(nodeset).Build()
 	claims := make(map[string]corev1.PersistentVolumeClaim, len(templates))
 	for i := range templates {
 		claim := templates[i].DeepCopy()
-		claim.Name = GetPersistentVolumeClaimName(nodeset, claim, paddedOrdinal)
+		if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+			claim.Name = GetPersistentVolumeClaimNameOrdinal(nodeset, claim, paddedOrdinal)
+		} else {
+			claim.Name = GetPersistentVolumeClaimNameNodeName(nodeset, claim, pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname])
+		}
 		claim.Namespace = nodeset.Namespace
 		if claim.Labels != nil {
 			maps.Copy(claim.Labels, selectorLabels)
@@ -275,11 +355,18 @@ func GetPersistentVolumeClaims(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) 
 	return claims
 }
 
-// GetPersistentVolumeClaimName gets the name of PersistentVolumeClaim for a Pod with an ordinal index of ordinal. claim
+// GetPersistentVolumeClaimNameOrdinal gets the name of PersistentVolumeClaim for a Pod with an ordinal index of ordinal. claim
 // must be a PersistentVolumeClaim from nodeset's VolumeClaims template.
-func GetPersistentVolumeClaimName(nodeset *slinkyv1beta1.NodeSet, claim *corev1.PersistentVolumeClaim, paddedOrdinal string) string {
+func GetPersistentVolumeClaimNameOrdinal(nodeset *slinkyv1beta1.NodeSet, claim *corev1.PersistentVolumeClaim, paddedOrdinal string) string {
 	// NOTE: This name format is used by the heuristics for zone spreading in ChooseZoneForVolume
 	return fmt.Sprintf("%s-%s-%s", claim.Name, nodeset.Name, paddedOrdinal)
+}
+
+// GetPersistentVolumeClaimNameNodeName gets the name of PersistentVolumeClaim for a Pod with a node name. claim
+// must be a PersistentVolumeClaim from nodeset's VolumeClaims template.
+func GetPersistentVolumeClaimNameNodeName(nodeset *slinkyv1beta1.NodeSet, claim *corev1.PersistentVolumeClaim, nodeName string) string {
+	// NOTE: This name format is used by the heuristics for zone spreading in ChooseZoneForVolume
+	return fmt.Sprintf("%s-%s-%s", claim.Name, nodeset.Name, nodeName)
 }
 
 // SetOwnerReferences modifies the object with all NodeSets as non-controller owners.

@@ -157,11 +157,19 @@ func (r *realPodControl) UpdateNodeSetPod(ctx context.Context, nodeset *slinkyv1
 // but a problem otherwise (see usage of this method in UpdateNodeSetPod).
 func (r *realPodControl) PodPVCsMatchRetentionPolicy(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) (bool, error) {
 	logger := klog.FromContext(ctx)
-	ordinal := nodesetutils.GetOrdinal(pod)
-	paddedOrdinal := nodesetutils.GetPaddedOrdinal(nodeset, ordinal)
+	var paddedOrdinal string
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		ordinal := nodesetutils.GetOrdinal(pod)
+		paddedOrdinal = nodesetutils.GetPaddedOrdinal(nodeset, ordinal)
+	}
 	templates := nodeset.Spec.VolumeClaimTemplates
 	for i := range templates {
-		claimName := nodesetutils.GetPersistentVolumeClaimName(nodeset, &templates[i], paddedOrdinal)
+		var claimName string
+		if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+			claimName = nodesetutils.GetPersistentVolumeClaimNameOrdinal(nodeset, &templates[i], paddedOrdinal)
+		} else {
+			claimName = nodesetutils.GetPersistentVolumeClaimNameNodeName(nodeset, &templates[i], pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname])
+		}
 		claim := &corev1.PersistentVolumeClaim{}
 		claimId := types.NamespacedName{
 			Namespace: nodeset.Namespace,
@@ -185,11 +193,19 @@ func (r *realPodControl) PodPVCsMatchRetentionPolicy(ctx context.Context, nodese
 // UpdatePodPVCsForRetentionPolicy implements PodControlInterface.
 func (r *realPodControl) UpdatePodPVCsForRetentionPolicy(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) error {
 	logger := klog.FromContext(ctx)
-	ordinal := nodesetutils.GetOrdinal(pod)
-	paddedOrdinal := nodesetutils.GetPaddedOrdinal(nodeset, ordinal)
+	var paddedOrdinal string
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		ordinal := nodesetutils.GetOrdinal(pod)
+		paddedOrdinal = nodesetutils.GetPaddedOrdinal(nodeset, ordinal)
+	}
 	templates := nodeset.Spec.VolumeClaimTemplates
 	for i := range templates {
-		claimName := nodesetutils.GetPersistentVolumeClaimName(nodeset, &templates[i], paddedOrdinal)
+		var claimName string
+		if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+			claimName = nodesetutils.GetPersistentVolumeClaimNameOrdinal(nodeset, &templates[i], paddedOrdinal)
+		} else {
+			claimName = nodesetutils.GetPersistentVolumeClaimNameNodeName(nodeset, &templates[i], pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname])
+		}
 		claimId := types.NamespacedName{
 			Namespace: nodeset.Namespace,
 			Name:      claimName,
@@ -501,14 +517,17 @@ func updateClaimOwnerRefForSetAndPod(logger klog.Logger, claim *corev1.Persisten
 	claim.SetOwnerReferences(refs)
 }
 
-// getPersistentVolumeClaimPolicy returns the PVC policy for a NodeSet, returning a retain policy if the nodeset policy is nil.
+// getPersistentVolumeClaimRetentionPolicy returns the PVC policy for a NodeSet, defaulting to retain when fields are unset.
 func getPersistentVolumeClaimRetentionPolicy(nodeset *slinkyv1beta1.NodeSet) slinkyv1beta1.NodeSetPersistentVolumeClaimRetentionPolicy {
 	policy := slinkyv1beta1.NodeSetPersistentVolumeClaimRetentionPolicy{
 		WhenDeleted: slinkyv1beta1.RetainPersistentVolumeClaimRetentionPolicyType,
 		WhenScaled:  slinkyv1beta1.RetainPersistentVolumeClaimRetentionPolicyType,
 	}
-	if nodeset.Spec.PersistentVolumeClaimRetentionPolicy != nil {
-		policy = *nodeset.Spec.PersistentVolumeClaimRetentionPolicy
+	if nodeset.Spec.PersistentVolumeClaimRetentionPolicy.WhenDeleted != "" {
+		policy.WhenDeleted = nodeset.Spec.PersistentVolumeClaimRetentionPolicy.WhenDeleted
+	}
+	if nodeset.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled != "" {
+		policy.WhenScaled = nodeset.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled
 	}
 	return policy
 }

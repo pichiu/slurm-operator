@@ -25,7 +25,7 @@ annotation, an error will be reported in the operator logs.
 
 ## Kubernetes
 
-Each Kubernetes node should be annotated with `topology.slinky.slurm.net/line`.
+Each Kubernetes node should be annotated with `topology.slinky.slurm.net/spec`.
 its value is transparently used by the operator to update Slurm node topology
 information, only if running as a NodeSet pod.
 
@@ -36,9 +36,9 @@ annotation applied.
 apiVersion: v1
 kind: Node
 metadata:
-  annotations:
-    topology.slinky.slurm.net/line: topo-switch:s0,topo-block:b0
   name: node0
+  annotations:
+    topology.slinky.slurm.net/spec: topo-switch:s0,topo-block:b0
 ```
 
 ## Slurm
@@ -87,35 +87,35 @@ And your Kubernetes nodes were annotated as such to match the `topology.yaml`.
 apiVersion: v1
 kind: Node
 metadata:
-  annotations:
-    topology.slinky.slurm.net/line: topo-switch:s1,topo-block:b1
   name: node1
+  annotations:
+    topology.slinky.slurm.net/spec: topo-switch:s1,topo-block:b1
 ---
 apiVersion: v1
 kind: Node
 metadata:
-  annotations:
-    topology.slinky.slurm.net/line: topo-switch:s1,topo-block:b1
   name: node2
+  annotations:
+    topology.slinky.slurm.net/spec: topo-switch:s1,topo-block:b1
 ---
 apiVersion: v1
 kind: Node
 metadata:
-  annotations:
-    topology.slinky.slurm.net/line: topo-switch:s2,topo-block:b2
   name: node3
+  annotations:
+    topology.slinky.slurm.net/spec: topo-switch:s2,topo-block:b2
 ---
 apiVersion: v1
 kind: Node
 metadata:
-  annotations:
-    topology.slinky.slurm.net/line: topo-switch:s2,topo-block:b2
   name: node4
+  annotations:
+    topology.slinky.slurm.net/spec: topo-switch:s2,topo-block:b2
 ```
 
 Then when the `slinky-0` NodeSet pod is scheduled onto Kubernetes node `node3`,
 the operator will update the Slurm node's topology to match that of
-`topology.slinky.slurm.net/line`. Hence Slurm will report the following after
+`topology.slinky.slurm.net/spec`. Hence Slurm will report the following after
 the Slurm node's topology was updated.
 
 ```console

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
+	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -16,12 +17,12 @@ import (
 )
 
 func TestBuilder_BuildTokenSecret(t *testing.T) {
-	jwtHs256Secret := &corev1.Secret{
+	jwtSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "slurm-jwths256key",
+			Name: "slurm-jwtkey",
 		},
 		Data: map[string][]byte{
-			"jwt_hs256.key": []byte("foo"),
+			"jwt.key": []byte("foo"),
 		},
 	}
 	type fields struct {
@@ -40,7 +41,7 @@ func TestBuilder_BuildTokenSecret(t *testing.T) {
 			name: "default",
 			fields: fields{
 				client: fake.NewClientBuilder().
-					WithObjects(jwtHs256Secret).
+					WithObjects(jwtSecret).
 					Build(),
 			},
 			args: args{
@@ -50,12 +51,12 @@ func TestBuilder_BuildTokenSecret(t *testing.T) {
 					},
 					Spec: slinkyv1beta1.TokenSpec{
 						Username: "foo",
-						JwtHs256KeyRef: slinkyv1beta1.JwtSecretKeySelector{
+						JwtKeyRef: &slinkyv1beta1.JwtSecretKeySelector{
 							SecretKeySelector: corev1.SecretKeySelector{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: "slurm-jwths256key",
+									Name: "slurm-jwtkey",
 								},
-								Key: "jwt_hs256.key",
+								Key: "jwt.key",
 							},
 						},
 					},
@@ -74,12 +75,12 @@ func TestBuilder_BuildTokenSecret(t *testing.T) {
 					},
 					Spec: slinkyv1beta1.TokenSpec{
 						Username: "foo",
-						JwtHs256KeyRef: slinkyv1beta1.JwtSecretKeySelector{
+						JwtKeyRef: &slinkyv1beta1.JwtSecretKeySelector{
 							SecretKeySelector: corev1.SecretKeySelector{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: "slurm-jwths256key",
+									Name: "slurm-jwtkey",
 								},
-								Key: "jwt_hs256.key",
+								Key: "jwt.key",
 							},
 						},
 					},
@@ -96,13 +97,14 @@ func TestBuilder_BuildTokenSecret(t *testing.T) {
 				t.Errorf("Builder.BuildTokenSecret() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+			refresh := ptr.Deref(tt.args.token.Spec.Refresh, defaults.DefaultTokenRefresh)
 			switch {
 			case err != nil:
 				return
 
-			case ptr.Deref(got.Immutable, false) != !tt.args.token.Spec.Refresh:
+			case ptr.Deref(got.Immutable, false) != !refresh:
 				t.Errorf("Immutable = %v , want = %v",
-					ptr.Deref(got.Immutable, false), !tt.args.token.Spec.Refresh)
+					ptr.Deref(got.Immutable, false), !refresh)
 			}
 		})
 	}

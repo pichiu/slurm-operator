@@ -10,6 +10,7 @@ import (
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	common "github.com/SlinkyProject/slurm-operator/internal/builder/common"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"k8s.io/utils/set"
@@ -39,6 +40,9 @@ func TestBuilder_BuildAccounting(t *testing.T) {
 				accounting: &slinkyv1beta1.Accounting{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "slurm",
+					},
+					Spec: slinkyv1beta1.AccountingSpec{
+						JwtKeyRef: &corev1.SecretKeySelector{},
 					},
 				},
 			},

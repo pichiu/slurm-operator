@@ -85,9 +85,9 @@ func (e *SecretEventHandler) enqueueRequest(
 
 	for _, controller := range controllerList.Items {
 		slurmKeyKey := controller.AuthSlurmKey()
-		jwtHs256KeyKey := controller.AuthJwtHs256Key()
+		jwtKeyKey := controller.AuthJwtKey()
 		if secretKey.String() != slurmKeyKey.String() &&
-			secretKey.String() != jwtHs256KeyKey.String() {
+			secretKey.String() != jwtKeyKey.String() {
 			continue
 		}
 

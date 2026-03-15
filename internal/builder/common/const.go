@@ -30,9 +30,9 @@ const (
 
 	AuthAltTypes = "auth/jwt"
 
-	JwtHs256KeyFile      = "jwt_hs256.key"
-	JwtHs256KeyPath      = SlurmEtcDir + "/" + JwtHs256KeyFile
-	JwtAuthAltParameters = "jwt_key=" + JwtHs256KeyPath
+	JwtKeyFile           = "jwt.key"
+	JwtKeyPath           = SlurmEtcDir + "/" + JwtKeyFile
+	JwtAuthAltParameters = "jwt_key=" + JwtKeyPath
 
 	JwksKeyFile           = "jwks.json"
 	JwksKeyPath           = SlurmEtcDir + "/" + JwksKeyFile
@@ -79,8 +79,8 @@ const (
 )
 
 const (
-	AnnotationAuthSlurmKeyHash    = slinkyv1beta1.SlinkyPrefix + "slurm-key-hash"
-	AnnotationAuthJwtHs256KeyHash = slinkyv1beta1.SlinkyPrefix + "jwt-hs256-key-hash"
+	AnnotationAuthSlurmKeyHash = slinkyv1beta1.SlinkyPrefix + "slurm-key-hash"
+	AnnotationAuthJwtKeyHash   = slinkyv1beta1.SlinkyPrefix + "jwt--key-hash"
 )
 
 const (

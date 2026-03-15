@@ -171,13 +171,13 @@ HELM_PLUGINS ?= $(LOCALBIN)/helm-plugins
 export HELM_CONFIG_HOME HELM_CACHE_HOME HELM_DATA_HOME HELM_PLUGINS
 
 ## Tool Versions
-CONTROLLER_TOOLS_VERSION ?= v0.20.0
+CONTROLLER_TOOLS_VERSION ?= v0.20.1
 OPERATOR_SDK_VERSION ?= v1.42.0
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 GOVULNCHECK_VERSION ?= latest
-GOLANGCI_LINT_VERSION ?= v2.9.0
+GOLANGCI_LINT_VERSION ?= v2.11.1
 HELM_DOCS_VERSION ?= v1.14.2
 PANDOC_VERSION ?= 3.9
 HELM_VERSION ?= v4.1.1
@@ -370,13 +370,13 @@ golangci-lint: golangci-lint-bin ## Run golangci-lint.
 golangci-lint-fmt: golangci-lint-bin ## Run golangci-lint fmt.
 	$(GOLANGCI_LINT) fmt
 
-CODECOV_PERCENT ?= 66
+CODECOV_PERCENT ?= 70
 
 .PHONY: test
 test: envtest ## Run tests.
 	rm -f cover.out cover.html
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-	go test `go list ./... | grep -v "/api" | grep -v "/e2e"` -v -coverprofile cover.out
+	go test `go list ./... | grep -v "/api" | grep -v "/e2e" | grep -v '/test'` -v -coverprofile cover.out
 	go tool cover -func cover.out
 	go tool cover -html cover.out -o cover.html
 	@percentage=$$(go tool cover -func=cover.out | grep ^total | awk '{print $$3}' | tr -d '%'); \

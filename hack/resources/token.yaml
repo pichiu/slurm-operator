@@ -5,9 +5,9 @@ metadata:
   name: slurm-token
   namespace: slurm
 spec:
-  jwtHs256KeyRef:
-    name: slurm-auth-jwths256
-    key: jwt_hs256.key
+  jwtKeyRef:
+    name: slurm-auth-jwt
+    key: jwt.key
   username: foo
   refresh: true
   lifetime: 15m

@@ -13,6 +13,8 @@ Run [Slurm] on [Kubernetes], by [SchedMD]. A [Slinky] project.
   - [Features](#features)
     - [Controller](#controller)
     - [NodeSets](#nodesets)
+      - [`StatefulSet` (default)](#statefulset-default)
+      - [`DaemonSet`](#daemonset)
     - [LoginSets](#loginsets)
     - [Hybrid Support](#hybrid-support)
     - [Slurm](#slurm)
@@ -95,6 +97,29 @@ Slurm node states (e.g. Idle, Allocated, Mixed, Down, Drain, Not Responding,
 etc...) are applied to each NodeSet pod via their pod conditions; each NodeSet
 pod contains a pod status that reflects their own Slurm node state.
 
+The NodeSet CRD supports a `scalingMode` field that controls how many pods are
+created and how they are scaled. This allows you to choose between replica-based
+scaling (like a StatefulSet) or one-pod-per-node scaling (like a DaemonSet).
+
+#### `StatefulSet` (default)
+
+- **Behavior**: The controller maintains a fixed number of pods according to the
+  `replicas` field.
+- **Use when**: A fixed or scalable number of Slurm worker pods is needed.
+  Scale-to-zero and horizontal autoscaling (e.g. HPA) apply to this mode.
+- **Note**: Each pod has a stable identity (e.g. ordinal-based naming)
+
+#### `DaemonSet`
+
+- **Behavior**: The controller schedules one pod per Kubernetes node that
+  matches the NodeSet's pod template (e.g. `nodeSelector`, `tolerations`). Pod
+  count follows the number of matching nodes. Adding or removing nodes
+  automatically adds or removes pods.
+- **Use when**: 1:1 alignment between Kubernetes and Slurm (slurmd) nodes is
+  needed.
+- **Note**: The `replicas` field is ignored. Pod identity is tied to the node
+  (e.g. node name) rather than an ordinal.
+
 The operator supports NodeSet scale to zero, scaling the resource down to zero
 replicas. Hence, any Horizontal Pod Autoscaler (HPA) that also support scale to
 zero can be best paired with NodeSets.
@@ -157,11 +182,10 @@ Slurm is a full featured HPC workload manager. To highlight a few features:
 Install the [cert-manager] with its CRDs:
 
 ```sh
-helm repo add jetstack https://charts.jetstack.io
-helm repo update
-helm install cert-manager jetstack/cert-manager \
-  --set 'crds.enabled=true' \
-  --namespace cert-manager --create-namespace
+helm install \
+  cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --namespace cert-manager --create-namespace \
+  --set crds.enabled=true
 ```
 
 Install the slurm-operator and its CRDs:
@@ -191,33 +215,44 @@ See [versioning] for more details.
 
 ### 1.Y Releases
 
-Breaking changes may be introduced into newer [CRDs]. To upgrade between `v1.Y`
-versions (e.g. `v1.0.Z` => `v1.1.Z`), upgrade the slurm-operator-crds chart
-followed by the slurm-operator chart. Any Slurm charts will automatically be
-handled via CRD conversion; no further action is required. It is still
-recommended to upgrade Slurm charts to make use of the new features and
-functionality.
+New Slinky versions may update the Slinky [CRDs] with new fields and deprecate
+old ones. During CRD version changes (e.g. `v1beta1` => `v1beta2`), deprecated
+fields may be removed. Through the Kubernetes API, CRD versions are
+automatically converted to the stored version. Therefore old CRD versions will
+still work, but it is recommended to use the new CRD version as indicated by the
+installed Slinky CRDs.
+
+To upgrade between Slinky `v1.Y` versions (e.g. `v1.0.Z` => `v1.1.Z`), upgrade
+the slurm-operator-crds chart followed by the slurm-operator chart, or both at
+the same time by upgrading the slurm-operator chart when using
+`crds.enabled=true`.
 
 ```bash
-helm upgrade slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds
+helm upgrade slurm-operator-crds oci://ghcr.io/slinkyproject/charts/slurm-operator-crds \
+  --version $SLINKY_VERSION
 helm upgrade slurm-operator oci://ghcr.io/slinkyproject/charts/slurm-operator \
-  --namespace=slinky
+  --namespace slinky --version $SLINKY_VERSION
 ```
 
-To make use of new Slinky CRD features, please review changes made to the CRDs
-and the Slurm chart. Update your values.yaml appropriately and upgrade the
-chart.
+All Slurm charts may remain on the old Slinky release series (e.g. `v1.0.x`)
+despite the slurm-operator and its CRDs being on a newer Slinky release series
+(e.g. `v1.1.x`). It is still recommended to upgrade Slurm charts to the new
+Slinky release series coinciding with the slurm-operator's Slinky release series
+to make use of the new fields, features, and functionality.
+
+Please review changes made to the CRDs and the Slurm chart. Update your
+`values.yaml` appropriately and upgrade the Slurm chart.
 
 ```sh
 helm upgrade slurm oci://ghcr.io/slinkyproject/charts/slurm \
-  --namespace=slurm
+  --namespace slurm --version $SLINKY_VERSION
 ```
 
 ### 0.Y Releases
 
-Breaking changes may be introduced into existing [CRDs]. To upgrade between
-`v0.Y` versions (e.g. `v0.1.Z` => `v0.2.Z`), uninstall all Slinky charts and
-delete Slinky CRDs, then install the new release like normal.
+Breaking changes may be introduced into existing Slinky [CRDs] versions. To
+upgrade between `v0.Y` versions (e.g. `v0.1.Z` => `v0.2.Z`), uninstall all
+Slinky charts and delete Slinky CRDs, then install the new release like normal.
 
 ```bash
 helm --namespace=slurm uninstall slurm
@@ -240,7 +275,7 @@ kubectl delete customresourcedefinitions.apiextensions.k8s.io tokens.slinky.slur
 
 Project documentation is located in the docs directory of this repository.
 
-Slinky documentation can be found [here][slinky-docs].
+[Slinky documentation][slinky-docs] is hosted on the web.
 
 ## Support and Development
 

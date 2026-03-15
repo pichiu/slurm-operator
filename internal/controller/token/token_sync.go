@@ -12,11 +12,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/token/slurmjwt"
+	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 	jwt "github.com/golang-jwt/jwt/v5"
 )
@@ -38,6 +40,8 @@ func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error
 		}
 		return err
 	}
+	token = token.DeepCopy()
+	defaults.SetTokenDefaults(token)
 
 	if token.DeletionTimestamp.IsZero() {
 		now := time.Now()
@@ -68,7 +72,7 @@ func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error
 		{
 			Name: "Refresh",
 			Sync: func(ctx context.Context, token *slinkyv1beta1.Token) error {
-				if !token.Spec.Refresh {
+				if !ptr.Deref(token.Spec.Refresh, defaults.DefaultTokenRefresh) {
 					return nil
 				}
 
@@ -127,8 +131,8 @@ func (r *TokenReconciler) getExpTime(ctx context.Context, token *slinkyv1beta1.T
 	if err != nil {
 		return time.Time{}, err
 	}
-	jwtHs256Ref := token.JwtHs256Ref()
-	signingKey, err := r.refResolver.GetSecretKeyRef(ctx, &jwtHs256Ref.SecretKeySelector, jwtHs256Ref.Namespace)
+	jwtRef := token.JwtRef()
+	signingKey, err := r.refResolver.GetSecretKeyRef(ctx, &jwtRef.SecretKeySelector, jwtRef.Namespace)
 	if err != nil {
 		return time.Time{}, err
 	}

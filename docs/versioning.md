@@ -9,6 +9,8 @@
   - [Releases](#releases)
     - [Schema](#schema)
     - [Major](#major)
+  - [CRD Versions](#crd-versions)
+  - [Helm Chart Versions](#helm-chart-versions)
 
 <!-- mdformat-toc end -->
 
@@ -52,9 +54,37 @@ criteria for shipping `v2.0.0`. We have not so far applied a rigorous
 interpretation of semantic versioning with respect to incompatible changes of
 any kind (e.g., component flag changes).
 
+## CRD Versions
+
+[CRDs] have their own [versioning][crd-versioning] (e.g. `v1alpha1`, `v1alpha2`,
+`v1beta1`). The Slinky version does not strongly correlate with the CRD version.
+
+New CRD version should be completely backwards compatible with old CRD versions;
+old CRD versions will automatically be converted to the new CRD version (if
+applicable). Therefore, if `v1beta2` was the latest installed CRD version, then
+resources that are installed as `v1beta1` will still work.
+
+Slinky `v1.Y` releases may introduce new fields to existing CRD versions and
+deprecate certain fields. Only a new CRD version can safely remove deprecated
+fields or restructure fields.
+
+When installing CR resources, it is recommended to use the latest installed CRD
+version. However, older CRD versions should work but may be missing new fields
+which control new functionality.
+
+## Helm Chart Versions
+
+Helm charts share their version with the Slinky release version.
+
+Slinky `v1.Y` releases may introduce structural changes to the `values.yaml`
+such that upgrading Slinky release series (e.g. `v1.0.Z` => `v1.1.Z`) of a chart
+may need extra attention.
+
 <!-- Links -->
 
 [containers]: https://github.com/SlinkyProject/containers
+[crd-versioning]: https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/
+[crds]: https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions
 [semver]: https://semver.org/
 [slurm-bridge]: https://github.com/SlinkyProject/slurm-bridge
 [slurm-client]: https://github.com/SlinkyProject/slurm-client

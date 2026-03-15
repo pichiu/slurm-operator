@@ -24,7 +24,7 @@ func NewObjectRef(obj client.Object) slinkyv1beta1.ObjectReference {
 	}
 }
 
-func NewController(name string, slurmKeyRef, jwtHs256KeyRef corev1.SecretKeySelector, accounting *slinkyv1beta1.Accounting) *slinkyv1beta1.Controller {
+func NewController(name string, slurmKeyRef, jwtKeyRef corev1.SecretKeySelector, accounting *slinkyv1beta1.Accounting) *slinkyv1beta1.Controller {
 	accountingRef := slinkyv1beta1.ObjectReference{}
 	if accounting != nil {
 		accountingRef = NewObjectRef(accounting)
@@ -39,9 +39,9 @@ func NewController(name string, slurmKeyRef, jwtHs256KeyRef corev1.SecretKeySele
 			Namespace: corev1.NamespaceDefault,
 		},
 		Spec: slinkyv1beta1.ControllerSpec{
-			SlurmKeyRef:    slurmKeyRef,
-			JwtHs256KeyRef: jwtHs256KeyRef,
-			AccountingRef:  accountingRef,
+			SlurmKeyRef:   slurmKeyRef,
+			JwtKeyRef:     &jwtKeyRef,
+			AccountingRef: accountingRef,
 			Slurmctld: slinkyv1beta1.ContainerWrapper{
 				Container: corev1.Container{
 					Image: "slurmctld",
@@ -56,6 +56,9 @@ func NewController(name string, slurmKeyRef, jwtHs256KeyRef corev1.SecretKeySele
 				Container: corev1.Container{
 					Image: "alpine",
 				},
+			},
+			Persistence: slinkyv1beta1.ControllerPersistence{
+				Enabled: ptr.To(false),
 			},
 		},
 	}
@@ -82,28 +85,28 @@ func NewSlurmKeySecret(ref corev1.SecretKeySelector) *corev1.Secret {
 	}
 }
 
-func NewJwtHs256KeyRef(name string) corev1.SecretKeySelector {
+func NewJwtKeyRef(name string) corev1.SecretKeySelector {
 	return corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{
-			Name: name + "-jwths256key",
+			Name: name + "-jwtkey",
 		},
-		Key: "jwt_hs256.key",
+		Key: "jwt.key",
 	}
 }
 
-func NewJwtHs256KeySecret(ref corev1.SecretKeySelector) *corev1.Secret {
+func NewJwtKeySecret(ref corev1.SecretKeySelector) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ref.Name,
 			Namespace: corev1.NamespaceDefault,
 		},
 		Data: map[string][]byte{
-			ref.Key: []byte("jwt_hs256.key"),
+			ref.Key: []byte("jwt.key"),
 		},
 	}
 }
 
-func NewAccounting(name string, slurmKeyRef, jwtHs256KeyRef corev1.SecretKeySelector, passwordRef corev1.SecretKeySelector) *slinkyv1beta1.Accounting {
+func NewAccounting(name string, slurmKeyRef, jwtKeyRef corev1.SecretKeySelector, passwordRef corev1.SecretKeySelector) *slinkyv1beta1.Accounting {
 	return &slinkyv1beta1.Accounting{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: slinkyv1beta1.AccountingAPIVersion,
@@ -114,8 +117,8 @@ func NewAccounting(name string, slurmKeyRef, jwtHs256KeyRef corev1.SecretKeySele
 			Namespace: corev1.NamespaceDefault,
 		},
 		Spec: slinkyv1beta1.AccountingSpec{
-			SlurmKeyRef:    slurmKeyRef,
-			JwtHs256KeyRef: jwtHs256KeyRef,
+			SlurmKeyRef: slurmKeyRef,
+			JwtKeyRef:   &jwtKeyRef,
 			StorageConfig: slinkyv1beta1.StorageConfig{
 				Host:           "mariadb",
 				PasswordKeyRef: passwordRef,
@@ -254,7 +257,7 @@ func NewRestapi(name string, controller *slinkyv1beta1.Controller) *slinkyv1beta
 	}
 }
 
-func NewToken(name string, jwtHs256KeySecret *corev1.Secret) *slinkyv1beta1.Token {
+func NewToken(name string, jwtKeySecret *corev1.Secret) *slinkyv1beta1.Token {
 	return &slinkyv1beta1.Token{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: slinkyv1beta1.TokenAPIVersion,
@@ -266,12 +269,12 @@ func NewToken(name string, jwtHs256KeySecret *corev1.Secret) *slinkyv1beta1.Toke
 		},
 		Spec: slinkyv1beta1.TokenSpec{
 			Username: "slurm",
-			JwtHs256KeyRef: slinkyv1beta1.JwtSecretKeySelector{
+			JwtKeyRef: &slinkyv1beta1.JwtSecretKeySelector{
 				SecretKeySelector: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: jwtHs256KeySecret.Name,
+						Name: jwtKeySecret.Name,
 					},
-					Key: "jwt_hs256.key",
+					Key: "jwt.key",
 				},
 			},
 		},

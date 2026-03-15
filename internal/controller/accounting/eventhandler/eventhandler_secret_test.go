@@ -19,13 +19,13 @@ import (
 func Test_SecretEventHandler_Create(t *testing.T) {
 	name := "slurm"
 	slurmKeyRef := testutils.NewSlurmKeyRef(name)
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+	jwtKeyRef := testutils.NewJwtKeyRef(name)
 	slurmKeySecret := testutils.NewSlurmKeySecret(slurmKeyRef)
-	jwtHs256KeySecret := testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-	controller := testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeySecret := testutils.NewJwtKeySecret(jwtKeyRef)
+	controller := testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 	passwordRef := testutils.NewPasswordRef(name)
 	passwordSecret := testutils.NewPasswordSecret(passwordRef)
-	accounting := testutils.NewAccounting(name, slurmKeyRef, jwtHs256KeyRef, passwordRef)
+	accounting := testutils.NewAccounting(name, slurmKeyRef, jwtKeyRef, passwordRef)
 	type fields struct {
 		Reader client.Reader
 	}
@@ -45,7 +45,7 @@ func Test_SecretEventHandler_Create(t *testing.T) {
 			fields: fields{
 				Reader: fake.NewFakeClient(
 					slurmKeySecret,
-					jwtHs256KeySecret,
+					jwtKeySecret,
 					controller,
 					passwordSecret,
 					accounting,
@@ -61,11 +61,11 @@ func Test_SecretEventHandler_Create(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "hs256 key",
+			name: "JWT key",
 			fields: fields{
 				Reader: fake.NewFakeClient(
 					slurmKeySecret,
-					jwtHs256KeySecret,
+					jwtKeySecret,
 					controller,
 					passwordSecret,
 					accounting,
@@ -74,7 +74,7 @@ func Test_SecretEventHandler_Create(t *testing.T) {
 			args: args{
 				ctx: context.TODO(),
 				evt: event.CreateEvent{
-					Object: jwtHs256KeySecret,
+					Object: jwtKeySecret,
 				},
 				q: newQueue(),
 			},
@@ -95,13 +95,13 @@ func Test_SecretEventHandler_Create(t *testing.T) {
 func Test_SecretEventHandler_Delete(t *testing.T) {
 	name := "slurm"
 	slurmKeyRef := testutils.NewSlurmKeyRef(name)
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+	jwtKeyRef := testutils.NewJwtKeyRef(name)
 	slurmKeySecret := testutils.NewSlurmKeySecret(slurmKeyRef)
-	jwtHs256KeySecret := testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-	controller := testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeySecret := testutils.NewJwtKeySecret(jwtKeyRef)
+	controller := testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 	passwordRef := testutils.NewPasswordRef(name)
 	passwordSecret := testutils.NewPasswordSecret(passwordRef)
-	accounting := testutils.NewAccounting(name, slurmKeyRef, jwtHs256KeyRef, passwordRef)
+	accounting := testutils.NewAccounting(name, slurmKeyRef, jwtKeyRef, passwordRef)
 	type fields struct {
 		Reader client.Reader
 	}
@@ -136,11 +136,11 @@ func Test_SecretEventHandler_Delete(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "hs256 key",
+			name: "JWT key",
 			fields: fields{
 				Reader: fake.NewFakeClient(
 					slurmKeySecret,
-					jwtHs256KeySecret,
+					jwtKeySecret,
 					controller,
 					passwordSecret,
 					accounting,
@@ -149,7 +149,7 @@ func Test_SecretEventHandler_Delete(t *testing.T) {
 			args: args{
 				ctx: context.TODO(),
 				evt: event.DeleteEvent{
-					Object: jwtHs256KeySecret,
+					Object: jwtKeySecret,
 				},
 				q: newQueue(),
 			},
@@ -209,13 +209,13 @@ func Test_SecretEventHandler_Generic(t *testing.T) {
 func Test_SecretEventHandler_Update(t *testing.T) {
 	name := "slurm"
 	slurmKeyRef := testutils.NewSlurmKeyRef(name)
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+	jwtKeyRef := testutils.NewJwtKeyRef(name)
 	slurmKeySecret := testutils.NewSlurmKeySecret(slurmKeyRef)
-	jwtHs256KeySecret := testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-	controller := testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeySecret := testutils.NewJwtKeySecret(jwtKeyRef)
+	controller := testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 	passwordRef := testutils.NewPasswordRef(name)
 	passwordSecret := testutils.NewPasswordSecret(passwordRef)
-	accounting := testutils.NewAccounting(name, slurmKeyRef, jwtHs256KeyRef, passwordRef)
+	accounting := testutils.NewAccounting(name, slurmKeyRef, jwtKeyRef, passwordRef)
 	type fields struct {
 		Reader client.Reader
 	}
@@ -251,11 +251,11 @@ func Test_SecretEventHandler_Update(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "hs256 key",
+			name: "JWT key",
 			fields: fields{
 				Reader: fake.NewFakeClient(
 					slurmKeySecret,
-					jwtHs256KeySecret,
+					jwtKeySecret,
 					controller,
 					passwordSecret,
 					accounting,
@@ -264,8 +264,8 @@ func Test_SecretEventHandler_Update(t *testing.T) {
 			args: args{
 				ctx: context.TODO(),
 				evt: event.UpdateEvent{
-					ObjectOld: jwtHs256KeySecret,
-					ObjectNew: jwtHs256KeySecret,
+					ObjectOld: jwtKeySecret,
+					ObjectNew: jwtKeySecret,
 				},
 				q: newQueue(),
 			},

@@ -142,10 +142,10 @@ func accountingVolumes(accounting *slinkyv1beta1.Accounting) []corev1.Volume {
 						{
 							Secret: &corev1.SecretProjection{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: accounting.AuthJwtHs256Ref().Name,
+									Name: accounting.AuthJwtRef().Name,
 								},
 								Items: []corev1.KeyToPath{
-									{Key: accounting.AuthJwtHs256Ref().Key, Path: common.JwtHs256KeyFile},
+									{Key: accounting.AuthJwtRef().Key, Path: common.JwtKeyFile},
 								},
 							},
 						},
@@ -236,17 +236,17 @@ func (b *AccountingBuilder) getAuthHashesFromAccounting(ctx context.Context, acc
 		}
 	}
 
-	authJwtHs256 := &corev1.Secret{}
-	authJwtHs256Key := accounting.AuthJwtHs256Key()
-	if err := b.client.Get(ctx, authJwtHs256Key, authJwtHs256); err != nil {
+	authJwt := &corev1.Secret{}
+	authJwtKey := accounting.AuthJwtKey()
+	if err := b.client.Get(ctx, authJwtKey, authJwt); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, err
 		}
 	}
 
 	hashMap := map[string]string{
-		common.AnnotationAuthSlurmKeyHash:    crypto.CheckSumFromMap(authSlurm.Data),
-		common.AnnotationAuthJwtHs256KeyHash: crypto.CheckSumFromMap(authJwtHs256.Data),
+		common.AnnotationAuthSlurmKeyHash: crypto.CheckSumFromMap(authSlurm.Data),
+		common.AnnotationAuthJwtKeyHash:   crypto.CheckSumFromMap(authJwt.Data),
 	}
 
 	return hashMap, nil

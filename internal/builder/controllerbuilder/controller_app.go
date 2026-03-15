@@ -20,6 +20,7 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/builder/common"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/metadata"
+	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 )
 
 func (b *ControllerBuilder) BuildController(controller *slinkyv1beta1.Controller) (*appsv1.StatefulSet, error) {
@@ -56,8 +57,9 @@ func (b *ControllerBuilder) BuildController(controller *slinkyv1beta1.Controller
 		},
 	}
 
+	isPersistenceEnabled := ptr.Deref(persistence.Enabled, defaults.DefaultControllerPersistenceEnabled)
 	switch {
-	case persistence.Enabled && persistence.ExistingClaim != "":
+	case isPersistenceEnabled && persistence.ExistingClaim != "":
 		volume := corev1.Volume{
 			Name: common.SlurmctldStateSaveVolume,
 			VolumeSource: corev1.VolumeSource{
@@ -67,7 +69,7 @@ func (b *ControllerBuilder) BuildController(controller *slinkyv1beta1.Controller
 			},
 		}
 		o.Spec.Template.Spec.Volumes = append(o.Spec.Template.Spec.Volumes, volume)
-	case persistence.Enabled:
+	case isPersistenceEnabled:
 		volumeClaimTemplate := corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      common.SlurmctldStateSaveVolume,
@@ -184,10 +186,10 @@ func controllerVolumes(controller *slinkyv1beta1.Controller, extra []string) []c
 						{
 							Secret: &corev1.SecretProjection{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: controller.AuthJwtHs256Ref().Name,
+									Name: controller.AuthJwtRef().Name,
 								},
 								Items: []corev1.KeyToPath{
-									{Key: controller.AuthJwtHs256Ref().Key, Path: common.JwtHs256KeyFile},
+									{Key: controller.AuthJwtRef().Key, Path: common.JwtKeyFile},
 								},
 							},
 						},

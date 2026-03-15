@@ -82,9 +82,9 @@ func (e *SecretEventHandler) enqueueRequest(
 
 	for _, accounting := range accountingList.Items {
 		slurmKeyKey := accounting.AuthSlurmKey()
-		jwtHs256KeyKey := accounting.AuthJwtHs256Key()
+		jwtKeyKey := accounting.AuthJwtKey()
 		if secretKey.String() != slurmKeyKey.String() &&
-			secretKey.String() != jwtHs256KeyKey.String() {
+			secretKey.String() != jwtKeyKey.String() {
 			continue
 		}
 

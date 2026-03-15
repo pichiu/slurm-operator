@@ -4,6 +4,7 @@
 package v1beta1
 
 import (
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -28,6 +29,7 @@ type LoginSetSpec struct {
 	// same Template, but individual replicas also have a consistent identity.
 	// If unspecified, defaults to 1.
 	// +optional
+	// +default:=1
 	Replicas *int32 `json:"replicas,omitempty"`
 
 	// The login container configuration.
@@ -60,6 +62,11 @@ type LoginSetSpec struct {
 	// SssdConfRef is a reference to a secret containing the `sssd.conf`.
 	// +required
 	SssdConfRef corev1.SecretKeySelector `json:"sssdConfRef,omitzero"`
+
+	// Strategy is the deployment strategy to use to replace existing pods with new ones.
+	// Ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy
+	// +optional
+	Strategy appsv1.DeploymentStrategy `json:"strategy,omitzero"`
 
 	// Service defines a template for a Kubernetes Service object.
 	// +optional

@@ -27,9 +27,9 @@ spec:
   slurmKeyRef:
     name: {{ include "slurm.authSlurmRef.name" . }}
     key: {{ include "slurm.authSlurmRef.key" . }}
-  jwtHs256KeyRef:
-    name: {{ include "slurm.authJwtHs256Ref.name" . }}
-    key: {{ include "slurm.authJwtHs256Ref.key" . }}
+  jwtKeyRef:
+    name: {{ include "slurm.authJwtRef.name" . }}
+    key: {{ include "slurm.authJwtRef.key" . }}
   {{- if .Values.jwksKeys.enabled }}
   jwksKeyRef:
     name: {{ include "slurm.authJwksRef.name" . }}

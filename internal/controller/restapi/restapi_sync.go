@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
+	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 )
 
@@ -26,14 +27,16 @@ type SyncStep struct {
 func (r *RestapiReconciler) Sync(ctx context.Context, req reconcile.Request) error {
 	logger := log.FromContext(ctx)
 
-	cluster := &slinkyv1beta1.RestApi{}
-	if err := r.Get(ctx, req.NamespacedName, cluster); err != nil {
+	restapi := &slinkyv1beta1.RestApi{}
+	if err := r.Get(ctx, req.NamespacedName, restapi); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("Restapi has been deleted", "request", req)
 			return nil
 		}
 		return err
 	}
+	restapi = restapi.DeepCopy()
+	defaults.SetRestApiDefaults(restapi)
 
 	syncSteps := []SyncStep{
 		{
@@ -65,10 +68,10 @@ func (r *RestapiReconciler) Sync(ctx context.Context, req reconcile.Request) err
 	}
 
 	for _, s := range syncSteps {
-		if err := s.Sync(ctx, cluster); err != nil {
+		if err := s.Sync(ctx, restapi); err != nil {
 			e := fmt.Errorf("[%s]: %w", s.Name, err)
 			errors := []error{e}
-			if err := r.syncStatus(ctx, cluster); err != nil {
+			if err := r.syncStatus(ctx, restapi); err != nil {
 				e := fmt.Errorf("[%s]: %w", s.Name, err)
 				errors = append(errors, e)
 			}
@@ -76,5 +79,5 @@ func (r *RestapiReconciler) Sync(ctx context.Context, req reconcile.Request) err
 		}
 	}
 
-	return r.syncStatus(ctx, cluster)
+	return r.syncStatus(ctx, restapi)
 }

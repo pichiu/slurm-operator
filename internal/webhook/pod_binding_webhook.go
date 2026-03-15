@@ -9,13 +9,12 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
@@ -29,8 +28,7 @@ type PodBindingWebhook struct {
 var bindinglog = logf.Log.WithName("binding-resource")
 
 func (r *PodBindingWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(&corev1.Binding{}).
+	return ctrl.NewWebhookManagedBy(mgr, &corev1.Binding{}).
 		WithDefaulter(r).
 		Complete()
 }
@@ -40,15 +38,10 @@ func (r *PodBindingWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 // +kubebuilder:rbac:groups="",resources=pods/binding,verbs=get;list;watch
 // +kubebuilder:webhook:path=/mutate--v1-binding,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,sideEffects=None,groups="",resources=pods/binding,verbs=create,versions=v1,name=podsbinding-v1.kb.io,admissionReviewVersions=v1
 
-var _ webhook.CustomDefaulter = &PodBindingWebhook{}
+var _ admission.Defaulter[*corev1.Binding] = &PodBindingWebhook{}
 
 // Default implements admission.CustomDefaulter.
-func (r *PodBindingWebhook) Default(ctx context.Context, obj runtime.Object) error {
-	binding, ok := obj.(*corev1.Binding)
-	if !ok {
-		return fmt.Errorf("expected a Binding but got a %T", obj)
-	}
-
+func (r *PodBindingWebhook) Default(ctx context.Context, binding *corev1.Binding) error {
 	bindinglog.Info("mutate binding for pod on node", "pod", binding.Name, "node", binding.Target.Name)
 
 	pod := &corev1.Pod{}
@@ -72,10 +65,10 @@ func (r *PodBindingWebhook) Default(ctx context.Context, obj runtime.Object) err
 		return err
 	}
 
-	topologyLine := node.Annotations[slinkyv1beta1.AnnotationNodeTopologyLine]
+	topologyLine := node.Annotations[slinkyv1beta1.AnnotationNodeTopologySpec]
 
 	toUpdate := pod.DeepCopy()
-	toUpdate.Annotations[slinkyv1beta1.AnnotationNodeTopologyLine] = topologyLine
+	toUpdate.Annotations[slinkyv1beta1.AnnotationNodeTopologySpec] = topologyLine
 	if err := r.Patch(ctx, toUpdate, client.StrategicMergeFrom(pod)); err != nil {
 		bindinglog.Error(err, "failed to patch pod annotations", "pod", klog.KObj(pod))
 		return err

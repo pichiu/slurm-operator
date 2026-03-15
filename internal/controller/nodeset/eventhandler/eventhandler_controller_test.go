@@ -18,11 +18,11 @@ import (
 
 func Test_ControllerEventHandler_Create(t *testing.T) {
 	slurmKeyRef := testutils.NewSlurmKeyRef("foo")
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef("foo")
-	controller := testutils.NewController("slurm1", slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeyRef := testutils.NewJwtKeyRef("foo")
+	controller := testutils.NewController("slurm1", slurmKeyRef, jwtKeyRef, nil)
 	nodesetA := testutils.NewNodeset("slurmA", controller, 2)
 	nodesetB := testutils.NewNodeset("slurmB", controller, 2)
-	controller2 := testutils.NewController("slurm2", slurmKeyRef, jwtHs256KeyRef, nil)
+	controller2 := testutils.NewController("slurm2", slurmKeyRef, jwtKeyRef, nil)
 	nodeset2A := testutils.NewNodeset("slurm2A", controller2, 2)
 	type fields struct {
 		Reader client.Reader
@@ -126,11 +126,11 @@ func Test_ControllerEventHandler_Create(t *testing.T) {
 
 func Test_ControllerEventHandler_Delete(t *testing.T) {
 	slurmKeyRef := testutils.NewSlurmKeyRef("foo")
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef("foo")
-	controller := testutils.NewController("slurm1", slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeyRef := testutils.NewJwtKeyRef("foo")
+	controller := testutils.NewController("slurm1", slurmKeyRef, jwtKeyRef, nil)
 	nodesetA := testutils.NewNodeset("slurmA", controller, 2)
 	nodesetB := testutils.NewNodeset("slurmB", controller, 2)
-	controller2 := testutils.NewController("slurm2", slurmKeyRef, jwtHs256KeyRef, nil)
+	controller2 := testutils.NewController("slurm2", slurmKeyRef, jwtKeyRef, nil)
 	nodeset2A := testutils.NewNodeset("slurm2A", controller2, 2)
 	type fields struct {
 		Reader client.Reader
@@ -273,11 +273,11 @@ func Test_ControllerEventHandler_Generic(t *testing.T) {
 
 func Test_ControllerEventHandler_Update(t *testing.T) {
 	slurmKeyRef := testutils.NewSlurmKeyRef("foo")
-	jwtHs256KeyRef := testutils.NewJwtHs256KeyRef("foo")
-	controller := testutils.NewController("slurm1", slurmKeyRef, jwtHs256KeyRef, nil)
+	jwtKeyRef := testutils.NewJwtKeyRef("foo")
+	controller := testutils.NewController("slurm1", slurmKeyRef, jwtKeyRef, nil)
 	nodesetA := testutils.NewNodeset("slurmA", controller, 2)
 	nodesetB := testutils.NewNodeset("slurmB", controller, 2)
-	controller2 := testutils.NewController("slurm2", slurmKeyRef, jwtHs256KeyRef, nil)
+	controller2 := testutils.NewController("slurm2", slurmKeyRef, jwtKeyRef, nil)
 	nodeset2A := testutils.NewNodeset("slurm2A", controller2, 2)
 	type fields struct {
 		Reader client.Reader

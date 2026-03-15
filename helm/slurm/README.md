@@ -1,6 +1,6 @@
 # slurm
 
-![Version: 1.1.0-dev](https://img.shields.io/badge/Version-1.1.0--dev-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 25.11](https://img.shields.io/badge/AppVersion-25.11-informational?style=flat-square)
+![Version: 1.1.0-rc1](https://img.shields.io/badge/Version-1.1.0--rc1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 25.11](https://img.shields.io/badge/AppVersion-25.11-informational?style=flat-square)
 
 Slurm Cluster
 
@@ -95,11 +95,11 @@ Kubernetes: `>= 1.29.0-0`
 | jwksKeys | object | `{"configMapRef":{},"enabled":false}` | Slurm cluster JWKS authentication keys. Ref: https://slurm.schedmd.com/jwt.html#external_auth |
 | jwksKeys.configMapRef | configMapKeySelector | `{}` | Reference to the configMap. |
 | jwksKeys.enabled | bool | `false` | Enable use of JWKS file. |
-| jwtKey | object | `{"annotations":{},"create":true,"secretRef":{}}` | Slurm cluster JWT HS256 authentication key. Ref: https://slurm.schedmd.com/authentication.html#jwt |
+| jwtKey | object | `{"annotations":{},"create":true,"secretRef":{}}` | Slurm cluster JWT authentication key. Ref: https://slurm.schedmd.com/authentication.html#jwt |
 | jwtKey.annotations | object | `{}` | Annotations to add to the secret upon creation. |
 | jwtKey.create | bool | `true` | The secret will be created when true. |
 | jwtKey.secretRef | secretKeyRef | `{}` | Reference to the secret. |
-| loginsets | map[string]object | `{"slinky":{"enabled":false,"extraSshdConfig":null,"initconf":{"image":{"repository":"docker.io/library/alpine","tag":"latest"},"resources":{}},"login":{"env":[],"image":{"repository":"ghcr.io/slinkyproject/login","tag":"25.11-ubuntu24.04"},"resources":{},"securityContext":{"privileged":false},"volumeMounts":[]},"metadata":{},"podSpec":{"affinity":{},"initContainers":[],"nodeSelector":{"kubernetes.io/os":"linux"},"resources":{},"tolerations":[],"volumes":[]},"replicas":1,"rootSshAuthorizedKeys":null,"service":{"metadata":{},"spec":{"type":"LoadBalancer"}}}}` | Slurm LoginSet (sackd, sshd, sssd) configurations. |
+| loginsets | map[string]object | `{"slinky":{"enabled":false,"extraSshdConfig":null,"initconf":{"image":{"repository":"docker.io/library/alpine","tag":"latest"},"resources":{}},"login":{"env":[],"image":{"repository":"ghcr.io/slinkyproject/login","tag":"25.11-ubuntu24.04"},"resources":{},"securityContext":{"privileged":false},"volumeMounts":[]},"metadata":{},"podSpec":{"affinity":{},"initContainers":[],"nodeSelector":{"kubernetes.io/os":"linux"},"resources":{},"tolerations":[],"volumes":[]},"replicas":1,"rootSshAuthorizedKeys":null,"service":{"metadata":{},"spec":{"type":"LoadBalancer"}},"strategy":{}}}` | Slurm LoginSet (sackd, sshd, sssd) configurations. |
 | loginsets.slinky.enabled | bool | `false` | Enable use of this LoginSet. |
 | loginsets.slinky.extraSshdConfig | string | `nil` | Extra configuration lines appended to `/etc/ssh/sshd_config`. Ref: https://manpages.ubuntu.com/manpages/noble/man5/sshd_config.5.html |
 | loginsets.slinky.initconf.image | string \| object | `{"repository":"docker.io/library/alpine","tag":"latest"}` | The image to use. Ref: https://kubernetes.io/docs/concepts/containers/images/#image-names |
@@ -122,9 +122,10 @@ Kubernetes: `>= 1.29.0-0`
 | loginsets.slinky.service | object | `{"metadata":{},"spec":{"type":"LoadBalancer"}}` | The service configuration. |
 | loginsets.slinky.service.metadata | object | `{}` | Labels and annotations. Ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/ |
 | loginsets.slinky.service.spec | corev1.ServiceSpec | `{"type":"LoadBalancer"}` | Extend the service template, and/or override certain configurations. Ref: https://kubernetes.io/docs/concepts/services-networking/service/ |
+| loginsets.slinky.strategy | object | `{}` | Deployment strategy configuration. Ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy |
 | nameOverride | string | `nil` | Overrides the name of the release. |
 | namespaceOverride | string | `nil` | Overrides the namespace of the release. |
-| nodesets | map[string]object | `{"slinky":{"enabled":true,"extraConf":null,"extraConfMap":{},"logfile":{"image":{"repository":"docker.io/library/alpine","tag":"latest"},"resources":{}},"metadata":{},"ordinalPadding":0,"partition":{"config":null,"configMap":{},"enabled":true},"podSpec":{"affinity":{},"initContainers":[],"nodeSelector":{"kubernetes.io/os":"linux"},"resources":{},"tolerations":[],"volumes":[]},"replicas":1,"slurmd":{"args":[],"env":[],"image":{"repository":"ghcr.io/slinkyproject/slurmd","tag":"25.11-ubuntu24.04"},"resources":{},"volumeMounts":[]},"ssh":{"enabled":false,"extraSshdConfig":null},"taintKubeNodes":false,"updateStrategy":{"rollingUpdate":{"maxUnavailable":"25%"},"type":"RollingUpdate"},"workloadDisruptionProtection":true}}` | Slurm NodeSet (slurmd) configurations. |
+| nodesets | map[string]object | `{"slinky":{"enabled":true,"extraConf":null,"extraConfMap":{},"logfile":{"image":{"repository":"docker.io/library/alpine","tag":"latest"},"resources":{}},"metadata":{},"ordinalPadding":0,"partition":{"config":null,"configMap":{},"enabled":false},"podSpec":{"affinity":{},"initContainers":[],"nodeSelector":{"kubernetes.io/os":"linux"},"resources":{},"tolerations":[],"volumes":[]},"replicas":1,"scalingMode":"StatefulSet","slurmd":{"args":[],"env":[],"image":{"repository":"ghcr.io/slinkyproject/slurmd","tag":"25.11-ubuntu24.04"},"resources":{},"volumeMounts":[]},"ssh":{"enabled":false,"extraSshdConfig":null},"taintKubeNodes":false,"updateStrategy":{"rollingUpdate":{"maxUnavailable":"25%"},"type":"RollingUpdate"},"workloadDisruptionProtection":true}}` | Slurm NodeSet (slurmd) configurations. |
 | nodesets.slinky.enabled | bool | `true` | Enable use of this NodeSet. |
 | nodesets.slinky.extraConf | string | `nil` | Raw extra configuration added to the `--conf` argument. Ref: https://slurm.schedmd.com/slurmd.html#OPT_conf-%3Cnode-parameters%3E Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_NODE-CONFIGURATION |
 | nodesets.slinky.extraConfMap | map[string]string \| map[string][]string | `{}` | Extra configuration added to the `--conf` option. If `extraConf` is not empty, it takes precedence. Ref: https://slurm.schedmd.com/slurmd.html#OPT_conf-%3Cnode-parameters%3E Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_NODE-CONFIGURATION |
@@ -134,7 +135,7 @@ Kubernetes: `>= 1.29.0-0`
 | nodesets.slinky.ordinalPadding | int | `0` | How many places to pad with zeroes when constructing the pod ordinal. |
 | nodesets.slinky.partition.config | string | `nil` | Raw Slurm partition configuration options added to the partition line added to the partition line. Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION |
 | nodesets.slinky.partition.configMap | map[string]string \| map[string][]string | `{}` | The Slurm partition configuration options added to the partition line. If `config` is not empty, it takes precedence. Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION |
-| nodesets.slinky.partition.enabled | bool | `true` | Enable NodeSet partition creation. |
+| nodesets.slinky.partition.enabled | bool | `false` | Enable NodeSet partition creation. |
 | nodesets.slinky.podSpec | corev1.PodSpec | `{"affinity":{},"initContainers":[],"nodeSelector":{"kubernetes.io/os":"linux"},"resources":{},"tolerations":[],"volumes":[]}` | Extend the pod template, and/or override certain configurations. Ref: https://kubernetes.io/docs/concepts/workloads/pods/#pod-templates |
 | nodesets.slinky.podSpec.affinity | object | `{}` | Affinity for pod assignment. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity |
 | nodesets.slinky.podSpec.initContainers | list | `[]` | Additional initContainers for the pod. Ref: https://kubernetes.io/docs/concepts/workloads/pods/init-containers/ Ref: https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/ |
@@ -142,7 +143,8 @@ Kubernetes: `>= 1.29.0-0`
 | nodesets.slinky.podSpec.resources | object | `{}` | The pod resource limits and requests. Ref: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-requests-and-limits-of-pod-and-container |
 | nodesets.slinky.podSpec.tolerations | list | `[]` | Tolerations for pod assignment. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/ |
 | nodesets.slinky.podSpec.volumes | list | `[]` | List of volumes to use. Ref: https://kubernetes.io/docs/concepts/storage/volumes/ |
-| nodesets.slinky.replicas | int | `1` | Number of replicas to deploy. |
+| nodesets.slinky.replicas | int | `1` | Number of replicas to deploy. Ignored when scalingMode is daemonset. |
+| nodesets.slinky.scalingMode | string | `"StatefulSet"` | Scaling mode: "StatefulSet" (fixed replica count) or "DaemonSet" (one pod per matching node). |
 | nodesets.slinky.slurmd.args | list | `[]` | Arguments passed to the image. Ref: https://slurm.schedmd.com/slurmd.html#SECTION_OPTIONS |
 | nodesets.slinky.slurmd.env | list | `[]` | Environment passed to the image. |
 | nodesets.slinky.slurmd.image | string \| object | `{"repository":"ghcr.io/slinkyproject/slurmd","tag":"25.11-ubuntu24.04"}` | The image to use. Ref: https://kubernetes.io/docs/concepts/containers/images/#image-names |

@@ -16,9 +16,9 @@ manifest should match snapshot:
       epilogSlurmctldScriptRefs: null
       extraConf: |
         PartitionName=all Nodes=ALL Default=YES MaxTime=UNLIMITED State=UP
-      jwtHs256KeyRef:
-        key: jwt_hs256.key
-        name: test-release-slurm-auth-jwths256
+      jwtKeyRef:
+        key: jwt.key
+        name: test-release-slurm-auth-jwt
       logfile:
         image: docker.io/library/alpine:latest
         imagePullPolicy: IfNotPresent

@@ -21,20 +21,20 @@ var _ = Describe("LoginSet Controller", func() {
 		var loginset *slinkyv1beta1.LoginSet
 		var controller *slinkyv1beta1.Controller
 		var slurmKeySecret *corev1.Secret
-		var jwtHs256KeySecret *corev1.Secret
+		var jwtKeySecret *corev1.Secret
 		var sssdConfSecret *corev1.Secret
 
 		BeforeEach(func() {
 			slurmKeyRef := testutils.NewSlurmKeyRef(name)
-			jwtHs256KeyRef := testutils.NewJwtHs256KeyRef(name)
+			jwtKeyRef := testutils.NewJwtKeyRef(name)
 			slurmKeySecret = testutils.NewSlurmKeySecret(slurmKeyRef)
-			jwtHs256KeySecret = testutils.NewJwtHs256KeySecret(jwtHs256KeyRef)
-			controller = testutils.NewController(name, slurmKeyRef, jwtHs256KeyRef, nil)
+			jwtKeySecret = testutils.NewJwtKeySecret(jwtKeyRef)
+			controller = testutils.NewController(name, slurmKeyRef, jwtKeyRef, nil)
 			sssdconfRef := testutils.NewSssdConfRef(name)
 			sssdConfSecret = testutils.NewSssdConfSecret(sssdconfRef)
 			loginset = testutils.NewLoginset(name, controller, sssdconfRef)
 			Expect(k8sClient.Create(ctx, slurmKeySecret.DeepCopy())).To(Succeed())
-			Expect(k8sClient.Create(ctx, jwtHs256KeySecret.DeepCopy())).To(Succeed())
+			Expect(k8sClient.Create(ctx, jwtKeySecret.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, controller.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, sssdConfSecret.DeepCopy())).To(Succeed())
 			Expect(k8sClient.Create(ctx, loginset.DeepCopy())).To(Succeed())
@@ -42,7 +42,7 @@ var _ = Describe("LoginSet Controller", func() {
 
 		AfterEach(func() {
 			_ = k8sClient.Delete(ctx, slurmKeySecret)
-			_ = k8sClient.Delete(ctx, jwtHs256KeySecret)
+			_ = k8sClient.Delete(ctx, jwtKeySecret)
 			_ = k8sClient.Delete(ctx, controller)
 			_ = k8sClient.Delete(ctx, sssdConfSecret)
 			_ = k8sClient.Delete(ctx, loginset)

@@ -18,10 +18,16 @@ var (
 )
 
 // TokenSpec defines the desired state of Token
+// +kubebuilder:validation:XValidation:rule="has(self.jwtKeyRef) || has(self.jwtHs256KeyRef)", message="jwtKeyRef or jwtHs256KeyRef must be set"
 type TokenSpec struct {
 	// Slurm `auth/jwt` JWT HS256 key authentication.
-	// +required
-	JwtHs256KeyRef JwtSecretKeySelector `json:"jwtHs256KeyRef,omitzero"`
+	// This field is deprecated, please use JwtKeyRef instead.
+	// +optional
+	JwtHs256KeyRef *JwtSecretKeySelector `json:"jwtHs256KeyRef,omitzero"`
+
+	// Slurm `auth/jwt` JWT key authentication.
+	// +optional
+	JwtKeyRef *JwtSecretKeySelector `json:"jwtKeyRef,omitzero"`
 
 	// The username whom the token is created for.
 	// +required
@@ -35,7 +41,7 @@ type TokenSpec struct {
 	// If set to false, then the secret will be created as immutable.
 	// +optional
 	// +default:=true
-	Refresh bool `json:"refresh,omitzero"`
+	Refresh *bool `json:"refresh,omitzero"`
 
 	// SecretRef describes how to create the secret containing the JWT.
 	// +optional

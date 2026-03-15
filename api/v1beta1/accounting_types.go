@@ -19,7 +19,7 @@ var (
 
 // AccountingSpec defines the desired state of Accounting
 // +kubebuilder:validation:XValidation:rule="!self.external ? has(self.slurmKeyRef) : true", message="slurmKeyRef must be set when external is false"
-// +kubebuilder:validation:XValidation:rule="!self.external ? has(self.jwtHs256KeyRef) : true", message="jwtHs256KeyRef must be set when external is false"
+// +kubebuilder:validation:XValidation:rule="!self.external ? has(self.jwtKeyRef) || has(self.jwtHs256KeyRef) : true", message="jwtKeyRef or jwtHs256KeyRef must be set when external is false"
 // +kubebuilder:validation:XValidation:rule="self.external ? has(self.externalConfig) : true", message="externalConfig must be set when external is true"
 type AccountingSpec struct {
 	// Slurm `auth/slurm` key authentication.
@@ -27,8 +27,13 @@ type AccountingSpec struct {
 	SlurmKeyRef corev1.SecretKeySelector `json:"slurmKeyRef,omitzero"`
 
 	// Slurm `auth/jwt` JWT HS256 key authentication.
+	// This field is deprecated, please use JwtKeyRef instead.
 	// +optional
-	JwtHs256KeyRef corev1.SecretKeySelector `json:"jwtHs256KeyRef,omitzero"`
+	JwtHs256KeyRef *corev1.SecretKeySelector `json:"jwtHs256KeyRef,omitzero"`
+
+	// Slurm `auth/jwt` JWT key authentication.
+	// +optional
+	JwtKeyRef *corev1.SecretKeySelector `json:"jwtKeyRef,omitzero"`
 
 	// Slurm `auth/jwt` JWKS key authentication.
 	// +optional

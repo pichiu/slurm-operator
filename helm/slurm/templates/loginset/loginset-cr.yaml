@@ -12,7 +12,7 @@ SPDX-License-Identifier: Apache-2.0
 {{- $_ := set $podSpec "imagePullSecrets" $imagePullSecrets -}}
 {{- $priorityClassName := $podSpec.priorityClassName | default (include "slurm.priorityClassName" $) -}}
 {{- $_ := set $podSpec "priorityClassName" $priorityClassName -}}
-{{- $podTemplate := dict "metadata" $metadata "spec" $podSpec -}}
+{{- $podTemplate := dict "metadata" $metadata "spec" $podSpec }}
 ---
 apiVersion: slinky.slurm.net/v1beta1
 kind: LoginSet
@@ -37,9 +37,11 @@ spec:
   rootSshAuthorizedKeys: |
     {{- . | nindent 4 }}
   {{- end }}{{- /* with $loginset.rootSshAuthorizedKeys */}}
-  {{ if $loginset.replicas }}
   replicas: {{ $loginset.replicas }}
-  {{- end }}{{- /* if $loginset.replicas */}}
+  {{- with $loginset.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}{{- /* with $loginset.strategy */}}
   login:
     {{- $_ := set $loginset.login "imagePullPolicy" (get $loginset.login "imagePullPolicy" | default $.Values.imagePullPolicy ) -}}
     {{- include "format-container" $loginset.login | nindent 4 }}

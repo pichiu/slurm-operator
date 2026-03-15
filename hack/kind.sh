@@ -109,12 +109,9 @@ function slurm-operator-crds::install() {
 function slurm-operator::prerequisites() {
 	local chartName
 
-	helm repo add jetstack https://charts.jetstack.io
-	helm repo update
-
 	chartName=cert-manager
 	if ! helm::find "$chartName"; then
-		helm install "$chartName" jetstack/cert-manager \
+		helm install "$chartName" oci://quay.io/jetstack/charts/cert-manager \
 			--namespace cert-manager --create-namespace \
 			--set 'crds.enabled=true'
 	fi

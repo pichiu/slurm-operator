@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
+	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 )
 
@@ -35,6 +36,8 @@ func (r *LoginSetReconciler) Sync(ctx context.Context, req reconcile.Request) er
 		}
 		return err
 	}
+	loginset = loginset.DeepCopy()
+	defaults.SetLoginSetDefaults(loginset)
 
 	controller := &slinkyv1beta1.Controller{}
 	controllerKey := client.ObjectKey(loginset.Spec.ControllerRef.NamespacedName())

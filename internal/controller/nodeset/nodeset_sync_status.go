@@ -5,6 +5,7 @@ package nodeset
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -26,9 +28,11 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/slurmcontrol"
 	nodesetutils "github.com/SlinkyProject/slurm-operator/internal/controller/nodeset/utils"
+	"github.com/SlinkyProject/slurm-operator/internal/defaults"
 	"github.com/SlinkyProject/slurm-operator/internal/utils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/historycontrol"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/mathutils"
+	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/podutils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/structutils"
 	slurmconditions "github.com/SlinkyProject/slurm-operator/pkg/conditions"
@@ -97,7 +101,10 @@ func (r *NodeSetReconciler) syncNodeSetStatus(
 	selectorLabels := labels.NewBuilder().WithWorkerSelectorLabels(nodeset).Build()
 	selector := k8slabels.SelectorFromSet(k8slabels.Set(selectorLabels))
 
-	replicaStatus := r.calculateReplicaStatus(nodeset, pods, currentRevision, updateRevision)
+	replicaStatus, err := r.calculateReplicaStatus(ctx, nodeset, pods, currentRevision, updateRevision)
+	if err != nil {
+		return err
+	}
 	slurmNodeStatus, err := r.slurmControl.CalculateNodeStatus(ctx, nodeset, pods)
 	if err != nil {
 		return err
@@ -109,6 +116,7 @@ func (r *NodeSetReconciler) syncNodeSetStatus(
 		ReadyReplicas:       replicaStatus.Ready,
 		AvailableReplicas:   replicaStatus.Available,
 		UnavailableReplicas: replicaStatus.Unavailable,
+		Desired:             replicaStatus.Desired,
 		SlurmIdle:           slurmNodeStatus.Idle,
 		SlurmAllocated:      slurmNodeStatus.Allocated + slurmNodeStatus.Mixed,
 		SlurmDown:           slurmNodeStatus.Down,
@@ -130,7 +138,7 @@ func (r *NodeSetReconciler) syncNodeSetStatus(
 		return err
 	}
 
-	key := klog.KObj(nodeset).String()
+	key := objectutils.KeyFunc(nodeset)
 	if nodeset.Spec.MinReadySeconds >= 0 && (newStatus.ReadyReplicas != newStatus.AvailableReplicas) {
 		// Resync the NodeSet after MinReadySeconds as a last line of defense to guard against clock-skew.
 		durationStore.Push(key, (time.Duration(nodeset.Spec.MinReadySeconds)*time.Second)+time.Second)
@@ -149,14 +157,16 @@ type replicaStatus struct {
 	Unavailable int32
 	Current     int32
 	Updated     int32
+	Desired     int32
 }
 
 // calculateReplicaStatus will calculate the status of the given pods.
 func (r *NodeSetReconciler) calculateReplicaStatus(
+	ctx context.Context,
 	nodeset *slinkyv1beta1.NodeSet,
 	pods []*corev1.Pod,
 	currentRevision, updateRevision *appsv1.ControllerRevision,
-) replicaStatus {
+) (replicaStatus, error) {
 	status := replicaStatus{}
 
 	now := metav1.Now()
@@ -185,10 +195,18 @@ func (r *NodeSetReconciler) calculateReplicaStatus(
 			}
 		}
 	}
-	// Infer the Unavailable replicas
-	status.Unavailable = mathutils.Clamp(status.Replicas-status.Available, 0, status.Replicas)
-
-	return status
+	if nodeset != nil && nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		status.Unavailable = mathutils.Clamp(status.Replicas-status.Available, 0, status.Replicas)
+		status.Desired = ptr.Deref(nodeset.Spec.Replicas, defaults.DefaultNodeSetReplicas)
+	} else if nodeset != nil && nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeDaemonset {
+		desiredNodes, err := r.getDesiredNodeCountForDaemonSet(ctx, nodeset)
+		if err != nil {
+			return status, fmt.Errorf("failed to get desired node count for daemon set: %w", err)
+		}
+		status.Unavailable = mathutils.Clamp(desiredNodes-status.Available, 0, desiredNodes)
+		status.Desired = int32(desiredNodes)
+	}
+	return status, nil
 }
 
 // Sync NodeSet Pod Conditions to reflect Slurm base and flag states
@@ -224,7 +242,7 @@ func (r *NodeSetReconciler) updateNodeSetPodConditions(
 	for _, pod := range pods {
 		toUpdate := pod.DeepCopy()
 
-		podConditions := nodeStatus.NodeStates[nodesetutils.GetNodeName(toUpdate)]
+		podConditions := nodeStatus.NodeStates[nodesetutils.GetSlurmNodeName(toUpdate)]
 
 		// Filter previous SlurmNodeStates that are no longer present
 		var filteredConditions []corev1.PodCondition
@@ -316,7 +334,7 @@ func (r *NodeSetReconciler) updateNodeSetPodPDBLabels(
 		logger.V(1).Info("Pending Pod Label update", "pod", klog.KObj(pod), "podProtect", podProtect)
 		toUpdate := pod.DeepCopy()
 
-		if podProtect && nodeset.Spec.WorkloadDisruptionProtection {
+		if podProtect && ptr.Deref(nodeset.Spec.WorkloadDisruptionProtection, defaults.DefaultNodeSetWorkloadDisruptionProtection) {
 			podLabel := labels.NewBuilder().WithPodProtect().Build()
 			toUpdate.Labels = structutils.MergeMaps(toUpdate.Labels, podLabel)
 		} else {
