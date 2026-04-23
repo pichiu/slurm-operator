@@ -24,6 +24,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/clientmap"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/accounting"
@@ -33,6 +35,7 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/controller/restapi"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/slurmclient"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/token"
+	"github.com/SlinkyProject/slurm-operator/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -154,6 +157,9 @@ func main() {
 	}
 
 	clientMap := clientmap.NewClientMap()
+
+	ctrlmetrics.Registry.MustRegister(metrics.NewSlurmCollector(clientMap))
+
 	if err := controller.NewReconciler(mgr.GetClient(), clientMap).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Controller")
 		os.Exit(1)

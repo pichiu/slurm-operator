@@ -5,6 +5,7 @@ package clientmap
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -74,4 +75,15 @@ func (c *ClientMap) Remove(name types.NamespacedName) bool {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.remove(name)
+}
+
+func (c *ClientMap) List() []types.NamespacedName {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	keys := make([]types.NamespacedName, 0, len(c.clients))
+	for k := range c.clients {
+		ns, name, _ := strings.Cut(k, "/")
+		keys = append(keys, types.NamespacedName{Namespace: ns, Name: name})
+	}
+	return keys
 }
