@@ -37,8 +37,8 @@ type SlurmControlInterface interface {
 	RefreshNodeCache(ctx context.Context, nodeset *slinkyv1beta1.NodeSet) error
 	// UpdateNodeWithPodInfo handles updating the Node with its pod info
 	UpdateNodeWithPodInfo(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) error
-	// UpdateNodeTopology handles updating the Node with its topologyLine.
-	UpdateNodeTopology(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, topologyLine string) error
+	// UpdateNodeTopology handles updating the Node with its topologySpec.
+	UpdateNodeTopology(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, topologySpec string) error
 	// MakeNodeDrain handles adding the DRAIN state to the slurm node.
 	MakeNodeDrain(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, reason string) error
 	// MakeNodeUndrain handles removing the DRAIN state from the slurm node.
@@ -57,6 +57,10 @@ type SlurmControlInterface interface {
 	GetNodeDeadlines(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pods []*corev1.Pod) (*timestore.TimeStore, error)
 	// GetNodesForPods returns a list of Slurm nodes associated with the NodeSet pods.
 	GetNodesForPods(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pods []*corev1.Pod) ([]string, bool, error)
+	// GetDefunctNodesForNodeSet returns defunct-node candidates owned by this NodeSet.
+	GetDefunctNodesForNodeSet(ctx context.Context, nodeset *slinkyv1beta1.NodeSet) ([]DefunctNode, bool, error)
+	// DeleteNode deletes a Slurm node by name.
+	DeleteNode(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, nodeName string) error
 }
 
 // realSlurmControl is the default implementation of SlurmControlInterface.
@@ -104,9 +108,11 @@ func (r *realSlurmControl) UpdateNodeWithPodInfo(ctx context.Context, nodeset *s
 	}
 
 	podInfo := podinfo.PodInfo{
-		Namespace: pod.GetNamespace(),
-		PodName:   pod.GetName(),
-		Node:      pod.Spec.NodeName,
+		Namespace:   pod.GetNamespace(),
+		PodName:     pod.GetName(),
+		Node:        pod.Spec.NodeName,
+		NodeSetName: nodeset.Name,
+		NodeSetUID:  string(nodeset.UID),
 	}
 	podInfoOld := &podinfo.PodInfo{}
 	_ = podinfo.ParseIntoPodInfo(slurmNode.Comment, podInfoOld)
@@ -144,7 +150,7 @@ func (r *realSlurmControl) UpdateNodeWithPodInfo(ctx context.Context, nodeset *s
 }
 
 // UpdateNodeTopology implements SlurmControlInterface.
-func (r *realSlurmControl) UpdateNodeTopology(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, topologyLine string) error {
+func (r *realSlurmControl) UpdateNodeTopology(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, topologySpec string) error {
 	logger := log.FromContext(ctx)
 
 	slurmClient := r.lookupClient(nodeset)
@@ -164,15 +170,15 @@ func (r *realSlurmControl) UpdateNodeTopology(ctx context.Context, nodeset *slin
 	}
 
 	nodeTopology := ptr.Deref(slurmNode.Topology, "")
-	if apiequality.Semantic.DeepEqual(nodeTopology, topologyLine) {
-		logger.V(3).Info("Node topologyLine is identical to request, skipping update request",
-			"node", slurmNode.GetKey(), "topologyLine", nodeTopology)
+	if apiequality.Semantic.DeepEqual(nodeTopology, topologySpec) {
+		logger.V(3).Info("Node topologySpec is identical to request, skipping update request",
+			"node", slurmNode.GetKey(), "topologySpec", nodeTopology)
 		return nil
 	}
 
-	logger.Info("Update Slurm Node topologyLine", "Node", slurmNode.GetKey(), "topologyLine", topologyLine)
+	logger.Info("Update Slurm Node topologySpec", "Node", slurmNode.GetKey(), "topologySpec", topologySpec)
 	req := slurmapi.V0044UpdateNodeMsg{
-		TopologyStr: ptr.To(topologyLine),
+		TopologyStr: ptr.To(topologySpec),
 	}
 	if err := slurmClient.Update(ctx, slurmNode, req); err != nil {
 		if tolerateError(err) {
@@ -623,6 +629,80 @@ func (r *realSlurmControl) GetNodesForPods(ctx context.Context, nodeset *slinkyv
 	}
 
 	return slurmNodeNames, true, nil
+}
+
+type DefunctNode struct {
+	Name    string
+	PodInfo podinfo.PodInfo
+}
+
+// GetDefunctNodesForNodeSet implements SlurmControlInterface.
+func (r *realSlurmControl) GetDefunctNodesForNodeSet(ctx context.Context, nodeset *slinkyv1beta1.NodeSet) ([]DefunctNode, bool, error) {
+	logger := log.FromContext(ctx)
+
+	slurmClient := r.lookupClient(nodeset)
+	if slurmClient == nil {
+		logger.V(2).Info("no client for nodeset, cannot do GetDefunctNodesForNodeSet()")
+		return nil, false, nil
+	}
+
+	nodeList := &slurmtypes.V0044NodeList{}
+	if err := slurmClient.List(ctx, nodeList); err != nil {
+		return nil, true, err
+	}
+
+	defunctNodes := make([]DefunctNode, 0)
+	for _, node := range nodeList.Items {
+		if !node.GetStateAsSet().HasAll(slurmapi.V0044NodeStateDOWN, slurmapi.V0044NodeStateNOTRESPONDING) {
+			continue
+		}
+
+		info := &podinfo.PodInfo{}
+		if err := podinfo.ParseIntoPodInfo(node.Comment, info); err != nil {
+			continue
+		}
+		if info.Namespace != nodeset.Namespace ||
+			info.PodName == "" ||
+			info.NodeSetName != nodeset.Name ||
+			info.NodeSetUID == "" ||
+			info.NodeSetUID != string(nodeset.UID) {
+			continue
+		}
+
+		nodeName := ptr.Deref(node.Name, "")
+		if nodeName == "" {
+			continue
+		}
+
+		defunctNodes = append(defunctNodes, DefunctNode{
+			Name:    nodeName,
+			PodInfo: *info,
+		})
+	}
+
+	return defunctNodes, true, nil
+}
+
+// DeleteNode implements SlurmControlInterface.
+func (r *realSlurmControl) DeleteNode(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, nodeName string) error {
+	logger := log.FromContext(ctx)
+
+	slurmClient := r.lookupClient(nodeset)
+	if slurmClient == nil {
+		logger.V(2).Info("no client for nodeset, cannot do DeleteNode()", "nodeName", nodeName)
+		return nil
+	}
+
+	slurmNode := &slurmtypes.V0044Node{
+		V0044Node: slurmapi.V0044Node{
+			Name: new(nodeName),
+		},
+	}
+	if err := slurmClient.Delete(ctx, slurmNode); err != nil && !tolerateError(err) {
+		return err
+	}
+
+	return nil
 }
 
 func (r *realSlurmControl) lookupClient(nodeset *slinkyv1beta1.NodeSet) slurmclient.Client {

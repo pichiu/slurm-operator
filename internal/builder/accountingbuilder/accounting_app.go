@@ -43,7 +43,7 @@ func (b *AccountingBuilder) BuildAccounting(accounting *slinkyv1beta1.Accounting
 		return nil, fmt.Errorf("failed to build pod template: %w", err)
 	}
 
-	o := &appsv1.StatefulSet{
+	out := &appsv1.StatefulSet{
 		ObjectMeta: objectMeta,
 		Spec: appsv1.StatefulSetSpec{
 			PodManagementPolicy:  appsv1.ParallelPodManagement,
@@ -57,18 +57,18 @@ func (b *AccountingBuilder) BuildAccounting(accounting *slinkyv1beta1.Accounting
 		},
 	}
 
-	if err := controllerutil.SetControllerReference(accounting, o, b.client.Scheme()); err != nil {
+	if err := controllerutil.SetControllerReference(accounting, out, b.client.Scheme()); err != nil {
 		return nil, fmt.Errorf("failed to set owner controller: %w", err)
 	}
 
-	return o, nil
+	return out, nil
 }
 
 func (b *AccountingBuilder) accountingPodTemplate(accounting *slinkyv1beta1.Accounting) (corev1.PodTemplateSpec, error) {
 	ctx := context.TODO()
 	key := accounting.Key()
 
-	hashMap, err := b.getAccountingHashes(ctx, accounting)
+	hashMap, err := b.getHashes(ctx, accounting)
 	if err != nil {
 		return corev1.PodTemplateSpec{}, err
 	}
@@ -156,8 +156,7 @@ func accountingVolumes(accounting *slinkyv1beta1.Accounting) []corev1.Volume {
 		common.PidfileVolume(),
 	}
 
-	jwksEnabled := accounting.Spec.JwksKeyRef != nil
-	if jwksEnabled {
+	if accounting.AuthJwksRef() != nil {
 		volumeProjection := corev1.VolumeProjection{
 			ConfigMap: ptr.To(common.JwksConfigProjection(accounting.AuthJwksRef(), common.JwksKeyFile)),
 		}
@@ -205,8 +204,8 @@ const (
 	annotationSlurmdbdConfHash = slinkyv1beta1.SlinkyPrefix + "slurmdbd-conf-hash"
 )
 
-func (b *AccountingBuilder) getAccountingHashes(ctx context.Context, accounting *slinkyv1beta1.Accounting) (map[string]string, error) {
-	hashMap, err := b.getAuthHashesFromAccounting(ctx, accounting)
+func (b *AccountingBuilder) getHashes(ctx context.Context, accounting *slinkyv1beta1.Accounting) (map[string]string, error) {
+	hashMap, err := b.getAuthHashes(ctx, accounting)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +226,7 @@ func (b *AccountingBuilder) getAccountingHashes(ctx context.Context, accounting 
 	return hashMap, nil
 }
 
-func (b *AccountingBuilder) getAuthHashesFromAccounting(ctx context.Context, accounting *slinkyv1beta1.Accounting) (map[string]string, error) {
+func (b *AccountingBuilder) getAuthHashes(ctx context.Context, accounting *slinkyv1beta1.Accounting) (map[string]string, error) {
 	authSlurm := &corev1.Secret{}
 	authSlurmKey := accounting.AuthSlurmKey()
 	if err := b.client.Get(ctx, authSlurmKey, authSlurm); err != nil {

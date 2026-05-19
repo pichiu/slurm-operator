@@ -12,7 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/flowcontrol"
 	kubecontroller "k8s.io/kubernetes/pkg/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -48,6 +48,20 @@ const (
 	FailedPlacementReason = "FailedPlacement"
 	// FailedNodeSetPodReason is added to an event when the status of a Pod of a NodeSet is 'Failed'.
 	FailedNodeSetPodReason = "FailedNodeSetPod"
+	// ScalingUpReason is added to an event when pods are being created to reach the desired replica count.
+	ScalingUpReason = "ScalingUp"
+	// ScalingDownReason is added to an event when pods are being deleted to reach the desired replica count.
+	ScalingDownReason = "ScalingDown"
+	// NodeCordonReason is added to an event when a pod is cordoned due to its Kubernetes node being cordoned.
+	NodeCordonReason = "NodeCordon"
+	// SlurmNodeNotRegisteredReason is added to an event when a pod is deleted because its Slurm node is not registered.
+	SlurmNodeNotRegisteredReason = "SlurmNodeNotRegistered"
+	// DefunctSlurmNodePrunedReason is added to an event when a defunct Slurm node is pruned.
+	DefunctSlurmNodePrunedReason = "DefunctSlurmNodePruned"
+	// RollingUpdateReason is added to an event when pods are being replaced during a rolling update.
+	RollingUpdateReason = "RollingUpdate"
+	// ControllerRefFailedReason is added to an event when the referenced Controller CR cannot be fetched.
+	ControllerRefFailedReason = "ControllerRefFailed"
 )
 
 func init() {
@@ -71,27 +85,30 @@ type NodeSetReconciler struct {
 
 	ClientMap *clientmap.ClientMap
 
+	propagatedNodeConditions []corev1.NodeConditionType
+
 	builder        *builder.WorkerBuilder
 	refResolver    *refresolver.RefResolver
 	podControl     podcontrol.PodControlInterface
 	slurmControl   slurmcontrol.SlurmControlInterface
 	historyControl historycontrol.HistoryControlInterface
-	eventRecorder  record.EventRecorderLogger
+	eventRecorder  events.EventRecorder
 	expectations   *kubecontroller.UIDTrackingControllerExpectations
 }
 
-//+kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets/finalizers,verbs=update
-//+kubebuilder:rbac:groups=slinky.slurm.net,resources=controllers,verbs=get;list;watch
-//+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=pods/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
-//+kubebuilder:rbac:groups=apps,resources=controllerrevisions,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=slinky.slurm.net,resources=nodesets/finalizers,verbs=update
+// +kubebuilder:rbac:groups=slinky.slurm.net,resources=controllers,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=apps,resources=controllerrevisions,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -131,13 +148,8 @@ func (r *NodeSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (re
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NodeSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.eventRecorder = record.NewBroadcaster().NewRecorder(r.Scheme, corev1.EventSource{Component: ControllerName})
-	r.builder = builder.New(r.Client)
-	r.refResolver = refresolver.New(r.Client)
-	r.historyControl = historycontrol.NewHistoryControl(r.Client)
+	r.eventRecorder = mgr.GetEventRecorder(ControllerName)
 	r.podControl = podcontrol.NewPodControl(r.Client, r.eventRecorder)
-	r.slurmControl = slurmcontrol.NewSlurmControl(r.ClientMap)
-	r.expectations = kubecontroller.NewUIDTrackingControllerExpectations(kubecontroller.NewControllerExpectations())
 	podEventHandler := eventhandler.NewPodEventHandler(r.Client, r.expectations)
 	if err := indexes.SetupWithManager(mgr); err != nil {
 		return err
@@ -157,10 +169,9 @@ func (r *NodeSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func NewReconciler(c client.Client, cm *clientmap.ClientMap) *NodeSetReconciler {
+func NewReconciler(c client.Client, cm *clientmap.ClientMap, propagatedNodeConditions []corev1.NodeConditionType) *NodeSetReconciler {
 	s := c.Scheme()
-	es := corev1.EventSource{Component: ControllerName}
-	er := record.NewBroadcaster().NewRecorder(s, es)
+	er := events.NewFakeRecorder(100)
 	if cm == nil {
 		panic("ClientMap cannot be nil")
 	}
@@ -169,6 +180,8 @@ func NewReconciler(c client.Client, cm *clientmap.ClientMap) *NodeSetReconciler 
 		Scheme: s,
 
 		ClientMap: cm,
+
+		propagatedNodeConditions: propagatedNodeConditions,
 
 		builder:        builder.New(c),
 		refResolver:    refresolver.New(c),

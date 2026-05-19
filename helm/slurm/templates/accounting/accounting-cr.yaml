@@ -39,7 +39,7 @@ spec:
     key: {{ include "slurm.authJwksRef.key" . }}
   {{- end }}{{- /* if .Values.jwksKeys.enabled */}}
   {{- if (include "slurm.accounting.extraConf" .) }}
-  extraConf: |
+  extraConf: |-
     {{- include "slurm.accounting.extraConf" . | nindent 4 }}
   {{- end }}{{- /* if (include "slurm.accounting.extraConf" .) */}}
   slurmdbd:

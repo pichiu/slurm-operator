@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/apis/core/validation"
 	kubecontroller "k8s.io/kubernetes/pkg/controller"
@@ -31,7 +31,7 @@ type PodControlInterface interface {
 // RealPodControl is the default implementation of PodControlInterface.
 type realPodControl struct {
 	client.Client
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 }
 
 // CreatePods implements PodControlInterface.
@@ -62,7 +62,7 @@ func (r realPodControl) createPods(ctx context.Context, pod *corev1.Pod, object 
 	if err := r.Create(ctx, pod); err != nil {
 		// only send an event if the namespace isn't terminating
 		if !apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause) {
-			r.recorder.Eventf(object, corev1.EventTypeWarning, kubecontroller.FailedCreatePodReason, "Error creating: %v", err)
+			r.recorder.Eventf(object, pod, corev1.EventTypeWarning, kubecontroller.FailedCreatePodReason, "Create", "Error creating: %v", err)
 		}
 		return err
 	}
@@ -74,7 +74,7 @@ func (r realPodControl) createPods(ctx context.Context, pod *corev1.Pod, object 
 		return nil
 	}
 	logger.V(4).Info("Controller created pod", "controller", accessor.GetName(), "pod", klog.KObj(pod))
-	r.recorder.Eventf(object, corev1.EventTypeNormal, kubecontroller.SuccessfulCreatePodReason, "Created pod: %v", pod.GetName())
+	r.recorder.Eventf(object, pod, corev1.EventTypeNormal, kubecontroller.SuccessfulCreatePodReason, "Create", "Created pod: %v", pod.GetName())
 
 	return nil
 }
@@ -106,10 +106,10 @@ func (r *realPodControl) DeletePod(ctx context.Context, namespace string, podNam
 			logger.V(4).Info("Pod has already been deleted.", "pod", klog.KRef(namespace, podName))
 			return err
 		}
-		r.recorder.Eventf(object, corev1.EventTypeWarning, kubecontroller.FailedDeletePodReason, "Error deleting: %v", err)
+		r.recorder.Eventf(object, pod, corev1.EventTypeWarning, kubecontroller.FailedDeletePodReason, "Delete", "Error deleting: %v", err)
 		return fmt.Errorf("unable to delete pods: %w", err)
 	}
-	r.recorder.Eventf(object, corev1.EventTypeNormal, kubecontroller.SuccessfulDeletePodReason, "Deleted pod: %v", podName)
+	r.recorder.Eventf(object, pod, corev1.EventTypeNormal, kubecontroller.SuccessfulDeletePodReason, "Delete", "Deleted pod: %v", podName)
 
 	return nil
 }
@@ -128,7 +128,7 @@ func (r *realPodControl) PatchPod(ctx context.Context, namespace string, name st
 
 var _ PodControlInterface = &realPodControl{}
 
-func NewPodControl(client client.Client, recorder record.EventRecorder) PodControlInterface {
+func NewPodControl(client client.Client, recorder events.EventRecorder) PodControlInterface {
 	return &realPodControl{
 		Client:   client,
 		recorder: recorder,
@@ -202,10 +202,10 @@ func validateControllerRef(controllerRef *metav1.OwnerReference) error {
 		return fmt.Errorf("controllerRef has empty Kind")
 	}
 	if controllerRef.Controller == nil || !*controllerRef.Controller {
-		return fmt.Errorf("controllerRef.Controller is not nodeset to true")
+		return fmt.Errorf("controllerRef.Controller is not set to true")
 	}
 	if controllerRef.BlockOwnerDeletion == nil || !*controllerRef.BlockOwnerDeletion {
-		return fmt.Errorf("controllerRef.BlockOwnerDeletion is not nodeset")
+		return fmt.Errorf("controllerRef.BlockOwnerDeletion is not set to true")
 	}
 	return nil
 }

@@ -149,7 +149,7 @@ func TestDeleteObject(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := DeleteObject(tt.args.c, tt.args.ctx, tt.args.newObj); (err != nil) != tt.wantErr {
+			if err := DeleteObject(tt.args.c, tt.args.ctx, nil, nil, tt.args.newObj); (err != nil) != tt.wantErr {
 				t.Errorf("DeleteObject() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

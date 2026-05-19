@@ -6,6 +6,7 @@ package nodeset
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +35,6 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/utils/mathutils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/podutils"
-	"github.com/SlinkyProject/slurm-operator/internal/utils/structutils"
 	slurmconditions "github.com/SlinkyProject/slurm-operator/pkg/conditions"
 )
 
@@ -109,6 +109,10 @@ func (r *NodeSetReconciler) syncNodeSetStatus(
 	if err != nil {
 		return err
 	}
+	ordinalToNode, err := r.calculateOrdinalToNode(ctx, nodeset, pods)
+	if err != nil {
+		return err
+	}
 
 	newStatus := &slinkyv1beta1.NodeSetStatus{
 		Replicas:            replicaStatus.Replicas,
@@ -124,6 +128,7 @@ func (r *NodeSetReconciler) syncNodeSetStatus(
 		ObservedGeneration:  nodeset.Generation,
 		NodeSetHash:         hash,
 		CollisionCount:      &collisionCount,
+		OrdinalToNode:       ordinalToNode,
 		Selector:            selector.String(),
 		Conditions:          []metav1.Condition{},
 	}
@@ -209,6 +214,59 @@ func (r *NodeSetReconciler) calculateReplicaStatus(
 	return status, nil
 }
 
+// calculateOrdinalToNode builds the ordinal to node pinning map.
+// Add a node pin if pod is scheduled and running.
+// Clear the node pin if the node was deleted, or the pod template no longer matches the node.
+func (r *NodeSetReconciler) calculateOrdinalToNode(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pods []*corev1.Pod) (map[string]string, error) {
+	if !nodeset.Spec.PinToNode || nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeDaemonset {
+		return nil, nil //nolint:nilnil
+	}
+
+	ordinalToNode := make(map[string]string)
+	for ordinalStr, nodeName := range nodeset.Status.OrdinalToNode {
+		node := &corev1.Node{}
+		nodeKey := types.NamespacedName{Name: nodeName}
+		if err := r.Get(ctx, nodeKey, node); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		pod := nodesetutils.NewNodeSetSimulatedPod(r.Client, nodeset, &slinkyv1beta1.Controller{}, nodeName)
+		if shouldRun, _ := nodesetutils.PodShouldRunOnNode(ctx, pod, node); !shouldRun {
+			continue
+		}
+		ordinalToNode[ordinalStr] = nodeName
+	}
+
+	for _, pod := range pods {
+		nodeName := pod.Spec.NodeName
+		if nodeName == "" || !podutils.IsRunning(pod) {
+			continue
+		}
+		ordinal := nodesetutils.GetOrdinal(pod)
+		if ordinal < 0 {
+			continue
+		}
+
+		node := &corev1.Node{}
+		nodeKey := types.NamespacedName{Name: nodeName}
+		if err := r.Get(ctx, nodeKey, node); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		podFromTemplate := nodesetutils.NewNodeSetSimulatedPod(r.Client, nodeset, &slinkyv1beta1.Controller{}, nodeName)
+		if shouldRun, _ := nodesetutils.PodShouldRunOnNode(ctx, podFromTemplate, node); !shouldRun {
+			continue
+		}
+		ordinalToNode[strconv.Itoa(ordinal)] = nodeName
+	}
+
+	return ordinalToNode, nil
+}
+
 // Sync NodeSet Pod Conditions to reflect Slurm base and flag states
 func (r *NodeSetReconciler) syncNodeSetPodStatus(
 	ctx context.Context,
@@ -244,30 +302,19 @@ func (r *NodeSetReconciler) updateNodeSetPodConditions(
 
 		podConditions := nodeStatus.NodeStates[nodesetutils.GetSlurmNodeName(toUpdate)]
 
-		// Filter previous SlurmNodeStates that are no longer present
+		// Strip all existing SlurmNodeState conditions; they are re-applied
+		// from the current Slurm state by the UpdatePodCondition loop below.
 		var filteredConditions []corev1.PodCondition
 		for _, condition := range toUpdate.Status.Conditions {
-			// Keep any conditions that is not a SlurmNodeState
 			if !strings.HasPrefix(string(condition.Type), slurmconditions.StatePrefix) {
 				filteredConditions = append(filteredConditions, condition)
-			} else {
-				// Keep SlurmNodeStates that are still present
-				for _, cond := range podConditions {
-					_, c := podutil.GetPodCondition(&pod.Status, cond.Type)
-					if c != nil {
-						filteredConditions = append(filteredConditions, *c)
-					}
-				}
 			}
 		}
 		toUpdate.Status.Conditions = filteredConditions
 
 		// Add current Slurm node base and flag states
-		var condChanged bool
 		for _, cond := range podConditions {
-			if podutil.UpdatePodCondition(&toUpdate.Status, &cond) && !condChanged {
-				condChanged = true
-			}
+			podutil.UpdatePodCondition(&toUpdate.Status, &cond)
 		}
 		err := r.Status().Patch(ctx, toUpdate, client.StrategicMergeFrom(pod))
 		if err != nil {
@@ -320,32 +367,23 @@ func (r *NodeSetReconciler) updateNodeSetPodPDBLabels(
 
 	syncPodPDBLabelsFn := func(i int) error {
 		pod := pods[i]
-
-		// Refresh Pod to get current Pod Conditions
-		podKey := client.ObjectKeyFromObject(pod)
-		if err := r.Get(ctx, podKey, pod); err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
+		mutateFn := func(pod *corev1.Pod) error {
+			podProtect := slurmconditions.IsNodeBusy(&pod.Status)
+			logger.V(1).Info("Pending Pod Label update", "pod", klog.KObj(pod), "podProtect", podProtect)
+			if podProtect && ptr.Deref(nodeset.Spec.WorkloadDisruptionProtection, defaults.DefaultNodeSetWorkloadDisruptionProtection) {
+				pod.Labels[slinkyv1beta1.LabelNodeSetPodProtect] = "true"
+			} else {
+				delete(pod.Labels, slinkyv1beta1.LabelNodeSetPodProtect)
 			}
-			return err
+			return nil
 		}
-
-		podProtect := slurmconditions.IsNodeBusy(&pod.Status)
-		logger.V(1).Info("Pending Pod Label update", "pod", klog.KObj(pod), "podProtect", podProtect)
-		toUpdate := pod.DeepCopy()
-
-		if podProtect && ptr.Deref(nodeset.Spec.WorkloadDisruptionProtection, defaults.DefaultNodeSetWorkloadDisruptionProtection) {
-			podLabel := labels.NewBuilder().WithPodProtect().Build()
-			toUpdate.Labels = structutils.MergeMaps(toUpdate.Labels, podLabel)
-		} else {
-			delete(toUpdate.Labels, slinkyv1beta1.LabelNodeSetPodProtect)
+		if err := objectutils.PatchObject(r.Client, ctx, pod, mutateFn); err != nil {
+			if !apierrors.IsNotFound(err) {
+				logger.Error(err, "failed to patch pod labels for PDB", "pod", klog.KObj(pod))
+				return err
+			}
 		}
-
-		if err := r.Patch(ctx, toUpdate, client.StrategicMergeFrom(pod)); err != nil {
-			logger.Error(err, "failed to patch pod labels for PDB", "pod", klog.KObj(toUpdate))
-			return err
-		}
-		return r.Patch(ctx, toUpdate, client.StrategicMergeFrom(pod))
+		return nil
 	}
 	if _, err := utils.SlowStartBatch(len(pods), utils.SlowStartInitialBatchSize, syncPodPDBLabelsFn); err != nil {
 		return err

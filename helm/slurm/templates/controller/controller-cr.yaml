@@ -46,7 +46,7 @@ spec:
   clusterName: {{ . }}
   {{- end }}{{- /* with .Values.clusterName */}}
   {{- if (include "slurm.controller.extraConf" .) }}
-  extraConf: |
+  extraConf: |-
     {{- include "slurm.controller.extraConf" . | nindent 4 }}
   {{- end }}{{- /* if (include "slurm.controller.extraConf" .) */}}
   {{- with .Values.configFiles }}
@@ -78,6 +78,7 @@ spec:
   slurmctld:
     {{- $_ := set .Values.controller.slurmctld "imagePullPolicy" (get .Values.controller.slurmctld "imagePullPolicy" | default $.Values.imagePullPolicy ) -}}
     {{- include "format-container" .Values.controller.slurmctld | nindent 4 }}
+  inplaceReconfigure: {{ .Values.controller.inplaceReconfigure }}
   reconfigure:
     {{- $_ := set .Values.controller.reconfigure "imagePullPolicy" (get .Values.controller.reconfigure "imagePullPolicy" | default $.Values.imagePullPolicy ) -}}
     {{- include "format-container" .Values.controller.reconfigure | nindent 4 }}

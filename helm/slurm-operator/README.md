@@ -1,6 +1,6 @@
 # slurm-operator
 
-![Version: 1.1.0-rc1](https://img.shields.io/badge/Version-1.1.0--rc1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 25.11](https://img.shields.io/badge/AppVersion-25.11-informational?style=flat-square)
+![Version: 1.2.0-rc1](https://img.shields.io/badge/Version-1.2.0--rc1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 25.11](https://img.shields.io/badge/AppVersion-25.11-informational?style=flat-square)
 
 Slurm Operator
 
@@ -22,7 +22,7 @@ Kubernetes: `>= 1.29.0-0`
 
 | Repository | Name | Version |
 |------------|------|---------|
-| file://../slurm-operator-crds | slurm-operator-crds | 1.1.0-rc1 |
+| file://../slurm-operator-crds | slurm-operator-crds | 1.2.0-rc1 |
 
 ## Values
 
@@ -34,6 +34,7 @@ Kubernetes: `>= 1.29.0-0`
 | certManager.secretName | string | `"slurm-operator-webhook-ca"` | The secret to be (created and) mounted. |
 | crds | object | `{"enabled":false}` | Configure Custom Resource Definitions (CRDs). |
 | crds.enabled | bool | `false` | Whether this helm chart should manage the CRD and its upgrades. |
+| extraObjects | list | `[]` | Extra Kubernetes objects to deploy alongside the chart. Each entry is rendered as a standalone Kubernetes object. Supports Helm templating (e.g. {{ .Release.Namespace }}). |
 | fullnameOverride | string | `""` | Overrides the full name of the release. |
 | imagePullPolicy | string | `"IfNotPresent"` | Set the default image pull policy. |
 | imagePullSecrets | list | `[]` | Sets the image pull secrets. Ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/ |
@@ -50,6 +51,7 @@ Kubernetes: `>= 1.29.0-0`
 | operator.logLevel | string | `"info"` | Set the log level by string (e.g. error, info, debug) or number (e.g. 1..5). |
 | operator.loginsetWorkers | int | `4` | Set the max concurrent workers for the LoginSet controller. |
 | operator.metricsPort | int | `8080` | Set the port used by the metrics server. Value of "0" will disable it. |
+| operator.namespaces | string | `""` | Comma-separated list of namespaces the operator will watch. If empty, all namespaces are watched. |
 | operator.nodesetWorkers | int | `4` | Set the max concurrent workers for the NodeSet controller. |
 | operator.pdb.enabled | bool | `false` | Enable PodDisruptionBudget. |
 | operator.pdb.minAvailable | int | `1` | Minimum number of pods that must still be available after eviction. Can be an absolute number (ex: 5) or a percentage (ex: 25%). |
@@ -61,7 +63,9 @@ Kubernetes: `>= 1.29.0-0`
 | operator.slurmclientWorkers | int | `2` | Set the max concurrent workers for the SlurmClient controller. |
 | operator.tokenWorkers | int | `4` | Set the max concurrent workers for the Token controller. |
 | operator.tolerations | list | `[]` | Tolerations for pod assignment. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/ |
+| operator.topologySpreadConstraints | list | `[]` | Topology spread constraints for pod assignment. Prefer scheduling replicas across failure domains (nodes, zones, ...) when running in HA. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/ |
 | priorityClassName | string | `""` | Set the priority class to use. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/#priorityclass |
+| propagatedNodeConditions | list | `[]` | List of Kubernetes Node Conditions, by type, to propagate to the Slurm node drain reason. Ref: https://kubernetes.io/docs/reference/node/node-status/#condition |
 | webhook.affinity | object | `{}` | Affinity for pod assignment. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity |
 | webhook.enabled | bool | `true` | Enable the webhook. |
 | webhook.healthPort | int | `8081` | Set the port used for health checks. |
@@ -70,6 +74,7 @@ Kubernetes: `>= 1.29.0-0`
 | webhook.leaderElection | bool | `true` | Enable leader election for slurm-operator-webhook |
 | webhook.logLevel | string | `"info"` | Set the log level by string (e.g. error, info, debug) or number (e.g. 1..5). |
 | webhook.metricsPort | int | `0` | Set the port used by the metrics server. Value of "0" will disable it. |
+| webhook.namespaces | string | `""` | Comma-separated list of namespaces the webhook will watch. If empty, all namespaces are watched. |
 | webhook.pdb.enabled | bool | `false` | Enable PodDisruptionBudget. |
 | webhook.pdb.minAvailable | int | `1` | Minimum number of pods that must still be available after eviction. Can be an absolute number (ex: 5) or a percentage (ex: 25%). |
 | webhook.replicas | int | `1` | Set the number of replicas to deploy. |
@@ -79,4 +84,5 @@ Kubernetes: `>= 1.29.0-0`
 | webhook.serviceAccount.name | string | `""` | Set the service account to use (and create). |
 | webhook.timeoutSeconds | int | `10` | Set the timeout period for calls. |
 | webhook.tolerations | list | `[]` | Tolerations for pod assignment. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/ |
+| webhook.topologySpreadConstraints | list | `[]` | Topology spread constraints for pod assignment. Prefer scheduling replicas across failure domains (nodes, zones, ...) when running in HA. Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/ |
 

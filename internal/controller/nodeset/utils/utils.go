@@ -9,15 +9,23 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	corev1helper "k8s.io/component-helpers/scheduling/corev1"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
+	"k8s.io/klog/v2"
 	k8scontroller "k8s.io/kubernetes/pkg/controller"
 	daemonutils "k8s.io/kubernetes/pkg/controller/daemon/util"
+	"k8s.io/kubernetes/pkg/features"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
@@ -48,6 +56,11 @@ func NewNodeSetStatefulSetPod(
 	// scheduled on the same Node as another NodeSet pod.
 	pod.Spec.Affinity = updateNodeSetPodAntiAffinity(pod.Spec.Affinity)
 
+	// Ensure recreated pods are pinned to their node, but only if they still match their Node.
+	if nodeset.Spec.PinToNode {
+		pinPodToNode(client, nodeset.Status.OrdinalToNode, pod, ordinal)
+	}
+
 	// WARNING: Do not use the spec.NodeName otherwise the Pod scheduler will
 	// be avoided and priorityClass will not be honored.
 	pod.Spec.NodeName = ""
@@ -55,19 +68,40 @@ func NewNodeSetStatefulSetPod(
 	return pod
 }
 
+// pinPodToNode will modify the input Pod with its Node affinity if the pin is valid
+func pinPodToNode(kclient client.Client, ordinalToNode map[string]string, pod *corev1.Pod, ordinal int) {
+	nodeName, ok := ordinalToNode[strconv.Itoa(ordinal)]
+	if !ok {
+		return
+	}
+
+	ctx := context.TODO()
+	node := &corev1.Node{}
+	nodeKey := types.NamespacedName{Name: nodeName}
+	if err := kclient.Get(ctx, nodeKey, node); err != nil {
+		return
+	}
+	if shouldRun, _ := PodShouldRunOnNode(ctx, pod, node); !shouldRun {
+		return
+	}
+
+	pod.Spec.Affinity = daemonutils.ReplaceDaemonSetPodNodeNameNodeAffinity(pod.Spec.Affinity, nodeName)
+}
+
 func NewNodeSetDaemonSetPod(
 	client client.Client,
 	nodeset *slinkyv1beta1.NodeSet,
 	controller *slinkyv1beta1.Controller,
 	nodeName string,
+	hostnameOverride string,
 	revisionHash string,
 ) *corev1.Pod {
 	controllerRef := metav1.NewControllerRef(nodeset, slinkyv1beta1.NodeSetGVK)
 	podTemplate := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
 	pod, _ := k8scontroller.GetPodFromTemplate(&podTemplate, nodeset, controllerRef)
 
-	// Ensure the hostname is RFC 1178 compliant
-	safeHostname := getDaemonSetPodHostname(nodeset, nodeName)
+	// Ensure the hostname is RFC 1178 compliant, using the override if provided.
+	safeHostname := GetDaemonSetPodHostname(nodeName, hostnameOverride)
 	pod.Spec.Hostname = safeHostname
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)
@@ -95,17 +129,33 @@ func NewNodeSetDaemonSetPod(
 	return pod
 }
 
-func getDaemonSetPodHostname(nodeset *slinkyv1beta1.NodeSet, nodeName string) string {
+// NewNodeSetSimulatedPod returns a simulated Pod for predicate
+// evaluation. Unlike NewNodeSetDaemonSetPod, it preserves the user's node
+// affinity by setting spec.nodeName directly instead of using
+// ReplaceDaemonSetPodNodeNameNodeAffinity, which overwrites the
+// RequiredDuringSchedulingIgnoredDuringExecution terms.
+func NewNodeSetSimulatedPod(
+	client client.Client,
+	nodeset *slinkyv1beta1.NodeSet,
+	controller *slinkyv1beta1.Controller,
+	nodeName string,
+) *corev1.Pod {
+	controllerRef := metav1.NewControllerRef(nodeset, slinkyv1beta1.NodeSetGVK)
+	podTemplate := builder.New(client).BuildWorkerPodTemplate(nodeset, controller)
+	pod, _ := k8scontroller.GetPodFromTemplate(&podTemplate, nodeset, controllerRef)
+	pod.Spec.NodeName = nodeName
+	return pod
+}
+
+func GetDaemonSetPodHostname(nodeName, hostnameOverride string) string {
+	if hostnameOverride != "" {
+		return hostnameOverride
+	}
 	name := nodeName
 	if before, _, ok := strings.Cut(nodeName, "."); ok {
 		name = before
 	}
-	name = strings.TrimSuffix(name, "-")
-	if nodeset.Spec.Template.PodSpecWrapper.Hostname != "" {
-		prefix := strings.TrimSuffix(nodeset.Spec.Template.PodSpecWrapper.Hostname, "-")
-		return fmt.Sprintf("%s-%s", prefix, name)
-	}
-	return fmt.Sprintf("%s-%s", nodeset.Name, name)
+	return name
 }
 
 func initIdentity(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) {
@@ -214,13 +264,28 @@ func updateNodeSetPodAntiAffinity(affinity *corev1.Affinity) *corev1.Affinity {
 	return affinity
 }
 
-// IsPodFromNodeSet returns if the name schema matches
+// IsPodFromNodeSet returns true if pod is controlled by nodeset, or if pod is an
+// orphan that matches nodeset's pod identity schema based on the nodeset's scaling mode.
 func IsPodFromNodeSet(nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) bool {
-	found, err := regexp.MatchString(fmt.Sprintf("^%s-", nodeset.Name), pod.Name)
-	if err != nil {
+	if nodeset.Namespace != pod.Namespace {
 		return false
 	}
-	return found
+
+	if controllerRef := metav1.GetControllerOf(pod); controllerRef != nil {
+		return controllerRef.APIVersion == slinkyv1beta1.NodeSetAPIVersion &&
+			controllerRef.Kind == slinkyv1beta1.NodeSetKind &&
+			controllerRef.Name == nodeset.Name &&
+			controllerRef.UID == nodeset.UID
+	}
+
+	// StatefulSet orphan pods are identified by their parent name.
+	if nodeset.Spec.ScalingMode == slinkyv1beta1.ScalingModeStatefulset {
+		parent, ordinal := GetParentNameAndOrdinal(pod)
+		return ordinal >= 0 && parent == nodeset.Name
+	}
+
+	// DaemonSet orphan pods are identified by their GenerateName prefix.
+	return strings.TrimSuffix(pod.GenerateName, "-") == nodeset.Name
 }
 
 // GetOrdinal gets pod's ordinal. If pod has no ordinal, -1 is returned.
@@ -375,6 +440,9 @@ func SetOwnerReferences(r client.Client, ctx context.Context, object metav1.Obje
 	if err := r.List(ctx, nodesetList); err != nil {
 		return err
 	}
+	sort.Slice(nodesetList.Items, func(i, j int) bool {
+		return nodesetList.Items[i].Name < nodesetList.Items[j].Name
+	})
 
 	opts := []controllerutil.OwnerReferenceOption{
 		controllerutil.WithBlockOwnerDeletion(true),
@@ -389,4 +457,43 @@ func SetOwnerReferences(r client.Client, ctx context.Context, object metav1.Obje
 	}
 
 	return nil
+}
+
+// PodShouldRunOnNode checks pod preconditions against a node and returns a summary.
+// Returned booleans are:
+//   - shouldRun:
+//     Returns true when a pod should run on the node if a pod is not already
+//     running on that node.
+//   - shouldContinueRunning:
+//     Returns true when a should continue running on a node if a pod is already
+//     running on that node.
+func PodShouldRunOnNode(ctx context.Context, pod *corev1.Pod, node *corev1.Node) (shouldRun bool, shouldContinueRunning bool) {
+	logger := log.FromContext(ctx)
+
+	taints := node.Spec.Taints
+	fitsNodeName, fitsNodeAffinity, fitsTaints := predicates(logger, pod, node, taints)
+	if !fitsNodeName || !fitsNodeAffinity {
+		return false, false
+	}
+
+	if !fitsTaints {
+		// Scheduled pods should continue running if they tolerate NoExecute taint.
+		_, hasUntoleratedTaint := corev1helper.FindMatchingUntoleratedTaint(logger, taints, pod.Spec.Tolerations, func(t *corev1.Taint) bool {
+			return t.Effect == corev1.TaintEffectNoExecute
+		}, utilfeature.DefaultFeatureGate.Enabled(features.TaintTolerationComparisonOperators))
+		return false, !hasUntoleratedTaint
+	}
+
+	return true, true
+}
+
+func predicates(logger klog.Logger, pod *corev1.Pod, node *corev1.Node, taints []corev1.Taint) (fitsNodeName, fitsNodeAffinity, fitsTaints bool) {
+	fitsNodeName = len(pod.Spec.NodeName) == 0 || pod.Spec.NodeName == node.Name
+	// Ignore parsing errors for backwards compatibility.
+	fitsNodeAffinity, _ = nodeaffinity.GetRequiredNodeAffinity(pod).Match(node)
+	_, hasUntoleratedTaint := corev1helper.FindMatchingUntoleratedTaint(logger, taints, pod.Spec.Tolerations, func(t *corev1.Taint) bool {
+		return t.Effect == corev1.TaintEffectNoExecute || t.Effect == corev1.TaintEffectNoSchedule
+	}, utilfeature.DefaultFeatureGate.Enabled(features.TaintTolerationComparisonOperators))
+	fitsTaints = !hasUntoleratedTaint
+	return fitsNodeName, fitsNodeAffinity, fitsTaints
 }

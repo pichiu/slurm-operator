@@ -174,6 +174,100 @@ func TestIsPodFromNodeSet(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "Does not match sibling NodeSet with same prefix",
+			args: args{
+				nodeset: newNodeSet("foo"),
+				pod:     NewNodeSetStatefulSetPod(fake.NewFakeClient(), newNodeSet("foo-gpu"), controller, 1234, ""),
+			},
+			want: false,
+		},
+		{
+			name: "Does not match orphan sibling NodeSet with same prefix",
+			args: args{
+				nodeset: newNodeSet("foo"),
+				pod: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: corev1.NamespaceDefault,
+						Name:      "foo-gpu-1234",
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "Matches orphan StatefulSet pod for adoption",
+			args: args{
+				nodeset: newNodeSet("foo"),
+				pod: func() *corev1.Pod {
+					pod := NewNodeSetStatefulSetPod(fake.NewFakeClient(), newNodeSet("foo"), controller, 0, "")
+					pod.OwnerReferences = nil
+					return pod
+				}(),
+			},
+			want: true,
+		},
+		{
+			name: "Does not match controller ref with wrong UID",
+			args: args{
+				nodeset: func() *slinkyv1beta1.NodeSet {
+					nodeset := newNodeSet("foo")
+					nodeset.UID = "different-uid"
+					return nodeset
+				}(),
+				pod: NewNodeSetStatefulSetPod(fake.NewFakeClient(), newNodeSet("foo"), controller, 0, ""),
+			},
+			want: false,
+		},
+		{
+			name: "Non-controller owner reference is not enough",
+			args: args{
+				nodeset: newNodeSet("foo"),
+				pod: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: corev1.NamespaceDefault,
+						Name:      "unrelated",
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								APIVersion: slinkyv1beta1.NodeSetAPIVersion,
+								Kind:       slinkyv1beta1.NodeSetKind,
+								Name:       "foo",
+								UID:        newNodeSet("foo").UID,
+								Controller: ptr.To(false),
+							},
+						},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "Matches orphan DaemonSet pod for adoption",
+			args: args{
+				nodeset: newNodeSetDaemonset("foo", ""),
+				pod: func() *corev1.Pod {
+					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "", "")
+					pod.OwnerReferences = nil
+					pod.Name = "foo-abc123"
+					return pod
+				}(),
+			},
+			want: true,
+		},
+		{
+			name: "Does not match orphan DaemonSet sibling with same prefix",
+			args: args{
+				nodeset: newNodeSetDaemonset("foo", ""),
+				pod: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace:    corev1.NamespaceDefault,
+						Name:         "foo-gpu-abc123",
+						GenerateName: "foo-gpu-",
+					},
+				},
+			},
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -377,7 +471,7 @@ func TestIsIdentityMatch(t *testing.T) {
 			args: args{
 				nodeset: newNodeSetDaemonset("foo", ""),
 				pod: func() *corev1.Pod {
-					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "")
+					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "", "")
 					pod.Name = "foo-abc123"
 					pod.Labels[slinkyv1beta1.LabelNodeSetPodName] = pod.Name
 					return pod
@@ -390,7 +484,7 @@ func TestIsIdentityMatch(t *testing.T) {
 			args: args{
 				nodeset: newNodeSetDaemonset("foo", ""),
 				pod: func() *corev1.Pod {
-					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("bar", ""), controller, "node-1", "")
+					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("bar", ""), controller, "node-1", "", "")
 					pod.Name = "bar-abc123"
 					pod.Labels[slinkyv1beta1.LabelNodeSetPodName] = pod.Name
 					return pod
@@ -403,7 +497,7 @@ func TestIsIdentityMatch(t *testing.T) {
 			args: args{
 				nodeset: newNodeSetDaemonset("foo", ""),
 				pod: func() *corev1.Pod {
-					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "")
+					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "", "")
 					pod.Name = "foo-abc123"
 					pod.Labels[slinkyv1beta1.LabelNodeSetPodName] = "bar-abc123"
 					return pod
@@ -447,8 +541,9 @@ func TestNewNodeSetDaemonSetPod(t *testing.T) {
 	nodeset := newNodeSetDaemonset("foo", "")
 
 	type args struct {
-		nodeName     string
-		revisionHash string
+		nodeName         string
+		hostnameOverride string
+		revisionHash     string
 	}
 	tests := []struct {
 		name          string
@@ -462,6 +557,15 @@ func TestNewNodeSetDaemonSetPod(t *testing.T) {
 			args: args{
 				nodeName:     "node-1",
 				revisionHash: "",
+			},
+			checkIdentity: true,
+		},
+		{
+			name: "Uses hostname override when set",
+			args: args{
+				nodeName:         "node-1.example.com",
+				hostnameOverride: "custom-hostname",
+				revisionHash:     "",
 			},
 			checkIdentity: true,
 		},
@@ -492,12 +596,12 @@ func TestNewNodeSetDaemonSetPod(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pod := NewNodeSetDaemonSetPod(client, nodeset, controller, tt.args.nodeName, tt.args.revisionHash)
+			pod := NewNodeSetDaemonSetPod(client, nodeset, controller, tt.args.nodeName, tt.args.hostnameOverride, tt.args.revisionHash)
 			if pod == nil {
 				t.Fatal("NewNodeSetDaemonSetPod() returned nil")
 			}
 			if tt.checkIdentity {
-				wantHostname := getDaemonSetPodHostname(nodeset, tt.args.nodeName)
+				wantHostname := GetDaemonSetPodHostname(tt.args.nodeName, tt.args.hostnameOverride)
 				if pod.GenerateName != nodeset.Name+"-" {
 					t.Errorf("GenerateName = %q, want %q", pod.GenerateName, nodeset.Name+"-")
 				}
@@ -548,84 +652,158 @@ func TestNewNodeSetDaemonSetPod(t *testing.T) {
 	}
 }
 
+func TestNewNodeSetSimulatedPod(t *testing.T) {
+	controller := &slinkyv1beta1.Controller{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "foo",
+		},
+	}
+	client := fake.NewFakeClient()
+
+	t.Run("Preserves user node affinity and sets NodeName", func(t *testing.T) {
+		nodeset := newNodeSetDaemonset("foo", "")
+		userAffinity := &corev1.Affinity{
+			NodeAffinity: &corev1.NodeAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+						MatchExpressions: []corev1.NodeSelectorRequirement{{
+							Key:      "gpu",
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"true"},
+						}},
+					}},
+				},
+			},
+		}
+		nodeset.Spec.Template.PodSpecWrapper.Affinity = userAffinity
+
+		pod := NewNodeSetSimulatedPod(client, nodeset, controller, "node-1")
+		if pod == nil {
+			t.Fatal("NewNodeSetSimulatedPod() returned nil")
+		}
+		if pod.Spec.NodeName != "node-1" {
+			t.Errorf("Spec.NodeName = %q, want %q", pod.Spec.NodeName, "node-1")
+		}
+		if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil ||
+			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+			t.Fatal("user node affinity was not preserved")
+		}
+		terms := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+		if len(terms) != 1 {
+			t.Fatalf("expected 1 NodeSelectorTerm, got %d", len(terms))
+		}
+		if len(terms[0].MatchExpressions) != 1 || terms[0].MatchExpressions[0].Key != "gpu" {
+			t.Errorf("user MatchExpressions not preserved: %+v", terms[0].MatchExpressions)
+		}
+	})
+
+	t.Run("Works without user affinity", func(t *testing.T) {
+		nodeset := newNodeSetDaemonset("foo", "")
+
+		pod := NewNodeSetSimulatedPod(client, nodeset, controller, "node-2")
+		if pod == nil {
+			t.Fatal("NewNodeSetSimulatedPod() returned nil")
+		}
+		if pod.Spec.NodeName != "node-2" {
+			t.Errorf("Spec.NodeName = %q, want %q", pod.Spec.NodeName, "node-2")
+		}
+	})
+
+	t.Run("Preserves nodeSelector", func(t *testing.T) {
+		nodeset := newNodeSetDaemonset("foo", "")
+		nodeset.Spec.Template.PodSpecWrapper.NodeSelector = map[string]string{"disk": "ssd"}
+
+		pod := NewNodeSetSimulatedPod(client, nodeset, controller, "node-3")
+		if pod == nil {
+			t.Fatal("NewNodeSetSimulatedPod() returned nil")
+		}
+		if pod.Spec.NodeSelector["disk"] != "ssd" {
+			t.Errorf("nodeSelector not preserved: got %v", pod.Spec.NodeSelector)
+		}
+	})
+
+	t.Run("Preserves tolerations", func(t *testing.T) {
+		nodeset := newNodeSetDaemonset("foo", "")
+		nodeset.Spec.Template.PodSpecWrapper.Tolerations = []corev1.Toleration{
+			{Key: "gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+		}
+
+		pod := NewNodeSetSimulatedPod(client, nodeset, controller, "node-4")
+		if pod == nil {
+			t.Fatal("NewNodeSetSimulatedPod() returned nil")
+		}
+		found := false
+		for _, t := range pod.Spec.Tolerations {
+			if t.Key == "gpu" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("user toleration not preserved: got %v", pod.Spec.Tolerations)
+		}
+	})
+}
+
 func TestGetDaemonSetPodHostname(t *testing.T) {
 	tests := []struct {
-		name     string
-		nodeset  *slinkyv1beta1.NodeSet
-		nodeName string
-		want     string
+		name             string
+		nodeName         string
+		hostnameOverride string
+		want             string
 	}{
 		{
-			name:     "Nodeset name and node name combined",
-			nodeset:  newNodeSetDaemonset("foo", ""),
+			name:     "Simple node name",
 			nodeName: "node-1",
-			want:     "foo-node-1",
+			want:     "node-1",
 		},
 		{
-			name:     "Trailing dash on node name is trimmed",
-			nodeset:  newNodeSetDaemonset("foo", ""),
+			name:     "Trailing dash on node name is not trimmed",
 			nodeName: "node-1-",
-			want:     "foo-node-1",
+			want:     "node-1-",
 		},
 		{
 			name:     "Empty node name",
-			nodeset:  newNodeSetDaemonset("foo", ""),
 			nodeName: "",
-			want:     "foo-",
-		},
-		{
-			name:     "Different nodeset name",
-			nodeset:  newNodeSetDaemonset("my-nodeset", ""),
-			nodeName: "worker-0",
-			want:     "my-nodeset-worker-0",
-		},
-		{
-			name:     "Node name with multiple trailing dashes",
-			nodeset:  newNodeSetDaemonset("foo", ""),
-			nodeName: "node-1---",
-			want:     "foo-node-1--",
+			want:     "",
 		},
 		{
 			name:     "Single character node name",
-			nodeset:  newNodeSetDaemonset("ns", ""),
 			nodeName: "a",
-			want:     "ns-a",
+			want:     "a",
 		},
 		{
 			name:     "AWS-style FQDN node name uses first label only",
-			nodeset:  newNodeSetDaemonset("foo", ""),
 			nodeName: "node1.us-west-2.compute.internal",
-			want:     "foo-node1",
+			want:     "node1",
 		},
 		{
 			name:     "GCP-style internal DNS node name uses first label only",
-			nodeset:  newNodeSetDaemonset("worker", ""),
 			nodeName: "node-2.my-project.us-central1-a.c.gcp-project.internal",
-			want:     "worker-node-2",
+			want:     "node-2",
 		},
 		{
 			name:     "Azure-style node name uses first label only, trailing dash trimmed",
-			nodeset:  newNodeSetDaemonset("slurm", ""),
 			nodeName: "node-0.abc123.region.azure.internal-",
-			want:     "slurm-node-0",
+			want:     "node-0",
 		},
 		{
-			name:     "Custom template hostname prefix is used without separator",
-			nodeset:  newNodeSetDaemonset("foo", "slurm-"),
-			nodeName: "node-1",
-			want:     "slurm-node-1",
+			name:             "Hostname override takes precedence over node name",
+			nodeName:         "node-1.example.com",
+			hostnameOverride: "custom-hostname",
+			want:             "custom-hostname",
 		},
 		{
-			name:     "Custom template hostname with FQDN node name uses first label",
-			nodeset:  newNodeSetDaemonset("foo", "worker-"),
-			nodeName: "node-2.my-project.us-central1-a.c.gcp-project.internal",
-			want:     "worker-node-2",
+			name:             "Empty hostname override falls back to node name",
+			nodeName:         "node-1",
+			hostnameOverride: "",
+			want:             "node-1",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := getDaemonSetPodHostname(tt.nodeset, tt.nodeName); got != tt.want {
-				t.Errorf("getDaemonSetPodHostname() = %q, want %q", got, tt.want)
+			if got := GetDaemonSetPodHostname(tt.nodeName, tt.hostnameOverride); got != tt.want {
+				t.Errorf("GetDaemonSetPodHostname() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -666,7 +844,7 @@ func TestIsStorageMatch(t *testing.T) {
 			name: "Match (Daemonset)",
 			args: args{
 				nodeset: newNodeSetDaemonset("foo", ""),
-				pod:     NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", ""),
+				pod:     NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "", ""),
 			},
 			want: true,
 		},
@@ -674,7 +852,7 @@ func TestIsStorageMatch(t *testing.T) {
 			name: "Not Match (Daemonset)",
 			args: args{
 				nodeset: newNodeSetDaemonset("foo", ""),
-				pod:     NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("bar", ""), controller, "node-1", ""),
+				pod:     NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("bar", ""), controller, "node-1", "", ""),
 			},
 			want: false,
 		},
@@ -683,7 +861,7 @@ func TestIsStorageMatch(t *testing.T) {
 			args: args{
 				nodeset: newNodeSetDaemonset("foo", ""),
 				pod: func() *corev1.Pod {
-					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "")
+					pod := NewNodeSetDaemonSetPod(fake.NewFakeClient(), newNodeSetDaemonset("foo", ""), controller, "node-1", "", "")
 					pod.Labels[slinkyv1beta1.LabelNodeSetPodHostname] = "node-2"
 					return pod
 				}(),

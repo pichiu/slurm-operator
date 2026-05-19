@@ -18,7 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	errorutils "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -53,7 +53,7 @@ type PodControlInterface interface {
 // RealPodControl is the default implementation of PodControlInterface.
 type realPodControl struct {
 	client.Client
-	recorder   record.EventRecorder
+	recorder   events.EventRecorder
 	podControl podcontrol.PodControlInterface
 }
 
@@ -74,15 +74,12 @@ func (r *realPodControl) CreateNodeSetPod(ctx context.Context, nodeset *slinkyv1
 		r.recordPodEvent(eventUpdate, nodeset, pod, err)
 		return err
 	}
-	r.recordPodEvent(eventCreate, nodeset, pod, err)
 	return err
 }
 
 // DeleteNodeSetPod implements PodControlInterface.
 func (r *realPodControl) DeleteNodeSetPod(ctx context.Context, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod) error {
-	err := r.podControl.DeletePod(ctx, pod.GetNamespace(), pod.GetName(), nodeset)
-	r.recordPodEvent(eventDelete, nodeset, pod, err)
-	return err
+	return r.podControl.DeletePod(ctx, pod.Namespace, pod.Name, nodeset)
 }
 
 // UpdatePod implements PodControlInterface.
@@ -221,7 +218,7 @@ func (r *realPodControl) UpdatePodPVCsForRetentionPolicy(ctx context.Context, no
 			if hasUnexpectedController(claim, nodeset, pod) {
 				// Add an event so the user knows they're in a strange configuration. The claim will be cleaned up below.
 				msg := fmt.Sprintf("PersistentVolumeClaim %s has a conflicting OwnerReference that acts as a managing controller, the retention policy is ignored for this claim", claimName)
-				r.recorder.Event(nodeset, corev1.EventTypeWarning, "ConflictingController", msg)
+				r.recorder.Eventf(nodeset, claim, corev1.EventTypeWarning, "ConflictingController", "Info", msg)
 			}
 			if !isClaimOwnerUpToDate(logger, claim, nodeset, pod) {
 				claim = claim.DeepCopy() // Make a copy so we don't mutate the shared cache.
@@ -270,16 +267,17 @@ func (r *realPodControl) IsPodPVCsStale(ctx context.Context, nodeset *slinkyv1be
 // have a reason of corev1.EventTypeNormal. If err is not nil the generated event will have a reason of corev1.EventTypeWarning.
 func (r *realPodControl) recordPodEvent(verb string, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, err error) {
 	caser := cases.Title(language.English)
+	verbStr := caser.String(verb)
 	if err == nil {
 		reason := fmt.Sprintf("Successful%s", caser.String(verb))
-		message := fmt.Sprintf("%s Pod %s in NodeSet %s successful",
-			strings.ToLower(verb), pod.Name, nodeset.GetName())
-		r.recorder.Event(nodeset, corev1.EventTypeNormal, reason, message)
+		message := fmt.Sprintf("%s Pod %s successful",
+			strings.ToLower(verb), pod.Name)
+		r.recorder.Eventf(nodeset, pod, corev1.EventTypeNormal, reason, verbStr, message)
 	} else {
 		reason := fmt.Sprintf("Failed%s", caser.String(verb))
-		message := fmt.Sprintf("%s Pod %s in NodeSet %s failed error: %s",
-			strings.ToLower(verb), pod.Name, nodeset.GetName(), err)
-		r.recorder.Event(nodeset, corev1.EventTypeWarning, reason, message)
+		message := fmt.Sprintf("%s Pod %s failed error: %s",
+			strings.ToLower(verb), pod.Name, err)
+		r.recorder.Eventf(nodeset, pod, corev1.EventTypeWarning, reason, verbStr, message)
 	}
 }
 
@@ -322,22 +320,23 @@ func (r *realPodControl) createPersistentVolumeClaims(ctx context.Context, nodes
 // reason of corev1.EventTypeWarning.
 func (r *realPodControl) recordClaimEvent(verb string, nodeset *slinkyv1beta1.NodeSet, pod *corev1.Pod, claim *corev1.PersistentVolumeClaim, err error) {
 	caser := cases.Title(language.English)
+	verbStr := caser.String(verb)
 	if err == nil {
 		reason := fmt.Sprintf("Successful%s", caser.String(verb))
-		message := fmt.Sprintf("%s Claim %s Pod %s in NodeSet %s successful",
-			strings.ToLower(verb), claim.Name, pod.Name, nodeset.Name)
-		r.recorder.Event(nodeset, corev1.EventTypeNormal, reason, message)
+		message := fmt.Sprintf("%s Claim: %s Pod %s",
+			strings.ToLower(verb), claim.Name, pod.Name)
+		r.recorder.Eventf(nodeset, claim, corev1.EventTypeNormal, reason, verbStr, message)
 	} else {
 		reason := fmt.Sprintf("Failed%s", caser.String(verb))
-		message := fmt.Sprintf("%s Claim %s for Pod %s in NodeSet %s failed error: %s",
-			strings.ToLower(verb), claim.Name, pod.Name, nodeset.Name, err)
-		r.recorder.Event(nodeset, corev1.EventTypeWarning, reason, message)
+		message := fmt.Sprintf("%s Claim: %s for Pod %s failed: %s",
+			strings.ToLower(verb), claim.Name, pod.Name, err)
+		r.recorder.Eventf(nodeset, claim, corev1.EventTypeWarning, reason, verbStr, message)
 	}
 }
 
 var _ PodControlInterface = &realPodControl{}
 
-func NewPodControl(client client.Client, recorder record.EventRecorder) PodControlInterface {
+func NewPodControl(client client.Client, recorder events.EventRecorder) PodControlInterface {
 	return &realPodControl{
 		Client:     client,
 		recorder:   recorder,

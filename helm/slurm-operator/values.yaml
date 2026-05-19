@@ -54,6 +54,16 @@ operator:
     # - key: key1
     #   operator: Exists
     #   effect: NoSchedule
+  # -- Topology spread constraints for pod assignment. Prefer scheduling replicas
+  # across failure domains (nodes, zones, ...) when running in HA.
+  # Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+  topologySpreadConstraints: []
+    # - maxSkew: 1
+    #   topologyKey: topology.kubernetes.io/zone
+    #   whenUnsatisfiable: ScheduleAnyway
+    #   labelSelector:
+    #     matchLabels:
+    #       app.kubernetes.io/name: slurm-operator
   # -- The container resource limits and requests.
   # Ref: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-requests-and-limits-of-pod-and-container
   resources: {}
@@ -90,6 +100,9 @@ operator:
   metricsPort: 8080
   # -- Enable leader election for slurm-operator
   leaderElection: true
+  # -- Comma-separated list of namespaces the operator will watch.
+  # If empty, all namespaces are watched.
+  namespaces: ""
 
 
 # Webhook configurations.
@@ -123,6 +136,16 @@ webhook:
     # - key: key1
     #   operator: Exists
     #   effect: NoSchedule
+  # -- Topology spread constraints for pod assignment. Prefer scheduling replicas
+  # across failure domains (nodes, zones, ...) when running in HA.
+  # Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+  topologySpreadConstraints: []
+    # - maxSkew: 1
+    #   topologyKey: topology.kubernetes.io/zone
+    #   whenUnsatisfiable: ScheduleAnyway
+    #   labelSelector:
+    #     matchLabels:
+    #       app.kubernetes.io/name: slurm-operator-webhook
   # -- The container resource limits and requests.
   # Ref: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-requests-and-limits-of-pod-and-container
   resources: {}
@@ -147,6 +170,9 @@ webhook:
   metricsPort: 0
   # -- Enable leader election for slurm-operator-webhook
   leaderElection: true
+  # -- Comma-separated list of namespaces the webhook will watch.
+  # If empty, all namespaces are watched.
+  namespaces: ""
 
 #
 # Cert-Manager certificate configurations.
@@ -159,3 +185,19 @@ certManager:
   duration: 43800h0m0s # 5 year
   # -- Certificate renewal time. Should be before the expiration.
   renewBefore: 8760h0m0s # 1 year
+
+# -- List of Kubernetes Node Conditions, by type, to propagate to the Slurm node drain reason.
+# Ref: https://kubernetes.io/docs/reference/node/node-status/#condition
+propagatedNodeConditions: []
+  # - KubeletUnhealthy
+
+# -- Extra Kubernetes objects to deploy alongside the chart.
+# Each entry is rendered as a standalone Kubernetes object.
+# Supports Helm templating (e.g. {{ .Release.Namespace }}).
+extraObjects: []
+  # - apiVersion: v1
+  #   kind: ConfigMap
+  #   metadata:
+  #     name: extra-config
+  #   data:
+  #     key: value

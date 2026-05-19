@@ -31,10 +31,14 @@ const (
 func (b *ControllerBuilder) BuildControllerConfig(controller *slinkyv1beta1.Controller) (*corev1.ConfigMap, error) {
 	ctx := context.TODO()
 
-	accounting, err := b.refResolver.GetAccounting(ctx, controller.Spec.AccountingRef)
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return nil, err
+	var accounting *slinkyv1beta1.Accounting
+	if controller.Spec.AccountingRef != nil {
+		var err error
+		accounting, err = b.refResolver.GetAccounting(ctx, *controller.Spec.AccountingRef)
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, err
+			}
 		}
 	}
 
@@ -163,6 +167,26 @@ func buildSlurmConf(
 	prologSlurmctldScripts, epilogSlurmctldScripts []string,
 	cgroupEnabled bool,
 ) string {
+	mergeConfig := map[string][]string{
+		"SlurmctldParameters": func() []string {
+			params := []string{"enable_configless", "reconfig_on_restart"}
+			if cgroupEnabled {
+				params = append(params, "enable_stepmgr")
+			}
+			return params
+		}(),
+		"AuthInfo": {
+			common.AuthInfo,
+		},
+		"AuthAltParameters": func() []string {
+			params := []string{common.JwtAuthAltParameters}
+			if controller.AuthJwksRef() != nil {
+				params = append(params, common.JwksAuthAltParameters)
+			}
+			return params
+		}(),
+	}
+
 	controllerHost := fmt.Sprintf("%s(%s)", controller.PrimaryName(), controller.ServiceFQDNShort())
 
 	conf := config.NewBuilder()
@@ -193,23 +217,14 @@ func buildSlurmConf(
 	conf.AddProperty(config.NewProperty("AuthType", common.AuthType))
 	conf.AddProperty(config.NewProperty("CredType", common.CredType))
 	conf.AddProperty(config.NewProperty("AuthAltTypes", common.AuthAltTypes))
-
-	jwksEnabled := controller.Spec.JwksKeyRef != nil
-	if jwksEnabled {
-		conf.AddProperty(config.NewProperty("AuthAltParameters", common.JwtAuthAltParameters+","+common.JwksAuthAltParameters))
-	} else {
-		conf.AddProperty(config.NewProperty("AuthAltParameters", common.JwtAuthAltParameters))
-	}
-	conf.AddProperty(config.NewProperty("AuthInfo", common.AuthInfo))
-	conf.AddProperty(config.NewProperty("CommunicationParameters", "block_null_hash"))
-	conf.AddProperty(config.NewProperty("SelectTypeParameters", "CR_Core_Memory"))
+	conf.AddProperty(config.NewProperty("AuthAltParameters", strings.Join(mergeConfig["AuthAltParameters"], ",")))
+	conf.AddProperty(config.NewProperty("AuthInfo", strings.Join(mergeConfig["AuthInfo"], ",")))
+	conf.AddProperty(config.NewProperty("SlurmctldParameters", strings.Join(mergeConfig["SlurmctldParameters"], ",")))
 	if cgroupEnabled {
-		conf.AddProperty(config.NewProperty("SlurmctldParameters", "enable_configless,enable_stepmgr"))
 		conf.AddProperty(config.NewProperty("ProctrackType", "proctrack/cgroup"))
 		conf.AddProperty(config.NewProperty("PrologFlags", "Contain"))
 		conf.AddProperty(config.NewProperty("TaskPlugin", "task/affinity,task/cgroup"))
 	} else {
-		conf.AddProperty(config.NewProperty("SlurmctldParameters", "enable_configless"))
 		conf.AddProperty(config.NewProperty("ProctrackType", "proctrack/linuxproc"))
 		conf.AddProperty(config.NewProperty("TaskPlugin", "task/affinity"))
 	}
@@ -237,21 +252,35 @@ func buildSlurmConf(
 	}
 
 	if snippet := buildPrologEpilogSlurmctldConf(prologSlurmctldScripts, epilogSlurmctldScripts); snippet != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### SLURMCTLD PROLOG & EPILOG ###"))
 		conf.AddProperty(config.NewPropertyRaw(snippet))
 	}
 
 	if snippet := buildPrologEpilogConf(prologScripts, epilogScripts); snippet != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### PROLOG & EPILOG ###"))
 		conf.AddProperty(config.NewPropertyRaw(snippet))
 	}
 
 	if snippet := buildNodeSetConf(nodesetList); snippet != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### NODESET & PARTITION ###"))
 		conf.AddProperty(config.NewPropertyRaw(snippet))
 	}
 
 	extraConf := controller.Spec.ExtraConf
-	conf.AddProperty(config.NewPropertyRaw("#"))
-	conf.AddProperty(config.NewPropertyRaw("### EXTRA CONFIG ###"))
-	conf.AddProperty(config.NewPropertyRaw(extraConf))
+	if extraConf != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### EXTRA CONFIG ###"))
+		conf.AddProperty(config.NewPropertyRaw(extraConf))
+	}
+
+	if snippet := common.BuildMergedConfig(extraConf, mergeConfig); snippet != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### MERGED CONFIG ###"))
+		conf.AddProperty(config.NewPropertyRaw(snippet))
+	}
 
 	return conf.Build()
 }
@@ -266,10 +295,6 @@ func buildPrologEpilogSlurmctldConf(prologSlurmctldScripts, epilogSlurmctldScrip
 
 	sort.Strings(prologSlurmctldScripts)
 	sort.Strings(epilogSlurmctldScripts)
-	if len(prologSlurmctldScripts) > 0 || len(epilogSlurmctldScripts) > 0 {
-		conf.AddProperty(config.NewPropertyRaw("#"))
-		conf.AddProperty(config.NewPropertyRaw("### SLURMCTLD PROLOG & EPILOG ###"))
-	}
 	for _, filename := range prologSlurmctldScripts {
 		scriptPath := path.Join(common.SlurmEtcDir, filename)
 		conf.AddProperty(config.NewProperty("PrologSlurmctld", scriptPath))
@@ -292,10 +317,6 @@ func buildPrologEpilogConf(prologScripts, epilogScripts []string) string {
 
 	sort.Strings(prologScripts)
 	sort.Strings(epilogScripts)
-	if len(prologScripts) > 0 || len(epilogScripts) > 0 {
-		conf.AddProperty(config.NewPropertyRaw("#"))
-		conf.AddProperty(config.NewPropertyRaw("### PROLOG & EPILOG ###"))
-	}
 	for _, filename := range prologScripts {
 		conf.AddProperty(config.NewProperty("Prolog", filename))
 	}
@@ -316,10 +337,6 @@ func buildNodeSetConf(nodesetList *slinkyv1beta1.NodeSetList) string {
 	sort.Slice(nodesetList.Items, func(i, j int) bool {
 		return nodesetList.Items[i].Name < nodesetList.Items[j].Name
 	})
-	if len(nodesetList.Items) > 0 {
-		conf.AddProperty(config.NewPropertyRaw("#"))
-		conf.AddProperty(config.NewPropertyRaw("### COMPUTE & PARTITION ###"))
-	}
 	for _, nodeset := range nodesetList.Items {
 		name := nodeset.Name
 		template := nodeset.Spec.Template.PodSpecWrapper
@@ -377,10 +394,14 @@ func buildGresConf() string {
 func (b *ControllerBuilder) BuildControllerConfigExternal(controller *slinkyv1beta1.Controller) (*corev1.ConfigMap, error) {
 	ctx := context.TODO()
 
-	accounting, err := b.refResolver.GetAccounting(ctx, controller.Spec.AccountingRef)
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return nil, err
+	var accounting *slinkyv1beta1.Accounting
+	if controller.Spec.AccountingRef != nil {
+		var err error
+		accounting, err = b.refResolver.GetAccounting(ctx, *controller.Spec.AccountingRef)
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, err
+			}
 		}
 	}
 

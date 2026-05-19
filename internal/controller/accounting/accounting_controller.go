@@ -13,7 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/flowcontrol"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,7 +56,7 @@ type AccountingReconciler struct {
 
 	builder       *builder.AccountingBuilder
 	refResolver   *refresolver.RefResolver
-	eventRecorder record.EventRecorderLogger
+	eventRecorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=slinky.slurm.net,resources=accountings,verbs=get;list;watch;create;update;patch;delete
@@ -67,6 +67,7 @@ type AccountingReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -104,7 +105,7 @@ func (r *AccountingReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 func (r *AccountingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.builder = builder.New(r.Client)
 	r.refResolver = refresolver.New(r.Client)
-	r.eventRecorder = record.NewBroadcaster().NewRecorder(r.Scheme, corev1.EventSource{Component: ControllerName})
+	r.eventRecorder = mgr.GetEventRecorder(ControllerName)
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(ControllerName).
 		For(&slinkyv1beta1.Accounting{}).
@@ -122,13 +123,12 @@ func (r *AccountingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func NewReconciler(c client.Client) *AccountingReconciler {
 	s := c.Scheme()
-	es := corev1.EventSource{Component: ControllerName}
 	return &AccountingReconciler{
 		Client: c,
 		Scheme: s,
 
 		builder:       builder.New(c),
 		refResolver:   refresolver.New(c),
-		eventRecorder: record.NewBroadcaster().NewRecorder(s, es),
+		eventRecorder: events.NewFakeRecorder(100),
 	}
 }

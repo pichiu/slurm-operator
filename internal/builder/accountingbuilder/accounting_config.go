@@ -5,6 +5,7 @@ package accountingbuilder
 
 import (
 	"context"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -37,6 +38,19 @@ func (b *AccountingBuilder) BuildAccountingConfig(accounting *slinkyv1beta1.Acco
 
 // https://slurm.schedmd.com/slurmdbd.conf.html
 func buildSlurmdbdConf(accounting *slinkyv1beta1.Accounting, storagePass string) string {
+	mergeConfig := map[string][]string{
+		"AuthInfo": {
+			common.AuthInfo,
+		},
+		"AuthAltParameters": func() []string {
+			params := []string{common.JwtAuthAltParameters}
+			if accounting.AuthJwksRef() != nil {
+				params = append(params, common.JwksAuthAltParameters)
+			}
+			return params
+		}(),
+	}
+
 	dbdHost := accounting.PrimaryName()
 	storageHost := accounting.Spec.StorageConfig.Host
 	storagePort := accounting.Spec.StorageConfig.Port
@@ -55,14 +69,8 @@ func buildSlurmdbdConf(accounting *slinkyv1beta1.Accounting, storagePass string)
 	conf.AddProperty(config.NewPropertyRaw("### PLUGINS & PARAMETERS ###"))
 	conf.AddProperty(config.NewProperty("AuthType", common.AuthType))
 	conf.AddProperty(config.NewProperty("AuthAltTypes", common.AuthAltTypes))
-
-	jwksEnabled := accounting.Spec.JwksKeyRef != nil
-	if jwksEnabled {
-		conf.AddProperty(config.NewProperty("AuthAltParameters", common.JwtAuthAltParameters+","+common.JwksAuthAltParameters))
-	} else {
-		conf.AddProperty(config.NewProperty("AuthAltParameters", common.JwtAuthAltParameters))
-	}
-	conf.AddProperty(config.NewProperty("AuthInfo", common.AuthInfo))
+	conf.AddProperty(config.NewProperty("AuthAltParameters", strings.Join(mergeConfig["AuthAltParameters"], ",")))
+	conf.AddProperty(config.NewProperty("AuthInfo", strings.Join(mergeConfig["AuthInfo"], ",")))
 
 	conf.AddProperty(config.NewPropertyRaw("#"))
 	conf.AddProperty(config.NewPropertyRaw("### STORAGE ###"))
@@ -79,9 +87,17 @@ func buildSlurmdbdConf(accounting *slinkyv1beta1.Accounting, storagePass string)
 	conf.AddProperty(config.NewProperty("LogTimeFormat", common.LogTimeFormat))
 
 	extraConf := accounting.Spec.ExtraConf
-	conf.AddProperty(config.NewPropertyRaw("#"))
-	conf.AddProperty(config.NewPropertyRaw("### EXTRA CONFIG ###"))
-	conf.AddProperty(config.NewPropertyRaw(extraConf))
+	if extraConf != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### EXTRA CONFIG ###"))
+		conf.AddProperty(config.NewPropertyRaw(extraConf))
+	}
+
+	if snippet := common.BuildMergedConfig(extraConf, mergeConfig); snippet != "" {
+		conf.AddProperty(config.NewPropertyRaw("#"))
+		conf.AddProperty(config.NewPropertyRaw("### MERGED CONFIG ###"))
+		conf.AddProperty(config.NewPropertyRaw(snippet))
+	}
 
 	return conf.Build()
 }

@@ -236,7 +236,11 @@ func (in *ControllerSpec) DeepCopyInto(out *ControllerSpec) {
 		*out = new(v1.ConfigMapKeySelector)
 		(*in).DeepCopyInto(*out)
 	}
-	out.AccountingRef = in.AccountingRef
+	if in.AccountingRef != nil {
+		in, out := &in.AccountingRef, &out.AccountingRef
+		*out = new(ObjectReference)
+		**out = **in
+	}
 	out.ExternalConfig = in.ExternalConfig
 	in.Slurmctld.DeepCopyInto(&out.Slurmctld)
 	in.Reconfigure.DeepCopyInto(&out.Reconfigure)
@@ -661,6 +665,13 @@ func (in *NodeSetStatus) DeepCopyInto(out *NodeSetStatus) {
 		*out = make([]metav1.Condition, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.OrdinalToNode != nil {
+		in, out := &in.OrdinalToNode, &out.OrdinalToNode
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
 		}
 	}
 }

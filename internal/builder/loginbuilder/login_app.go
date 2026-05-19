@@ -85,7 +85,7 @@ func (b *LoginBuilder) BuildLogin(loginset *slinkyv1beta1.LoginSet) (*appsv1.Dep
 		return nil, fmt.Errorf("failed to build pod template: %w", err)
 	}
 
-	o := &appsv1.Deployment{
+	out := &appsv1.Deployment{
 		ObjectMeta: objectMeta,
 		Spec: appsv1.DeploymentSpec{
 			Replicas:             loginset.Spec.Replicas,
@@ -98,11 +98,11 @@ func (b *LoginBuilder) BuildLogin(loginset *slinkyv1beta1.LoginSet) (*appsv1.Dep
 		},
 	}
 
-	if err := controllerutil.SetControllerReference(loginset, o, b.client.Scheme()); err != nil {
+	if err := controllerutil.SetControllerReference(loginset, out, b.client.Scheme()); err != nil {
 		return nil, fmt.Errorf("failed to set owner controller: %w", err)
 	}
 
-	return o, nil
+	return out, nil
 }
 
 func (b *LoginBuilder) loginPodTemplate(loginset *slinkyv1beta1.LoginSet) (corev1.PodTemplateSpec, error) {
@@ -263,6 +263,15 @@ func loginVolumes(loginset *slinkyv1beta1.LoginSet, controller *slinkyv1beta1.Co
 }
 
 func (b *LoginBuilder) loginContainer(merge corev1.Container, controller *slinkyv1beta1.Controller) corev1.Container {
+	// Allow user to override SSH port for HostNetwork
+	sshPort := LoginPort
+	if len(merge.Ports) > 0 {
+		for _, port := range merge.Ports {
+			if port.Name == labels.LoginApp && port.ContainerPort != 0 {
+				sshPort = int(port.ContainerPort)
+			}
+		}
+	}
 	opts := common.ContainerOpts{
 		Base: corev1.Container{
 			Name: labels.LoginApp,
@@ -275,7 +284,7 @@ func (b *LoginBuilder) loginContainer(merge corev1.Container, controller *slinky
 			Ports: []corev1.ContainerPort{
 				{
 					Name:          labels.LoginApp,
-					ContainerPort: LoginPort,
+					ContainerPort: int32(sshPort),
 					Protocol:      corev1.ProtocolTCP,
 				},
 			},
@@ -334,11 +343,12 @@ func (b *LoginBuilder) getLoginHashes(ctx context.Context, loginset *slinkyv1bet
 			return nil, fmt.Errorf("failed to get object (%s): %w", klog.KObj(SssdSecret), err)
 		}
 	}
+	sssdConfRefKey := loginset.SssdSecretRef().Key
 
 	hashMap := map[string]string{
 		common.AnnotationSshHostKeysHash: crypto.CheckSumFromMap(SshHostKeys.Data),
 		common.AnnotationSshdConfHash:    crypto.CheckSum([]byte(SshConfig.Data[SshdConfigFile])),
-		common.AnnotationSssdConfHash:    crypto.CheckSum([]byte(SssdSecret.StringData[loginset.SssdSecretRef().Key])),
+		common.AnnotationSssdConfHash:    crypto.CheckSum(SssdSecret.Data[sssdConfRefKey]),
 	}
 
 	return hashMap, nil

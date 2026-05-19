@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -14,10 +15,12 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -44,17 +47,19 @@ func init() {
 	utilruntime.Must(monitoringv1.AddToScheme(scheme))
 
 	utilruntime.Must(slinkyv1beta1.AddToScheme(scheme))
-	//+kubebuilder:scaffold:scheme
+	// +kubebuilder:scaffold:scheme
 }
 
 // Input flags to the command
 type Flags struct {
-	enableLeaderElection    bool
-	leaderElectionNamespace string
-	probeAddr               string
-	metricsAddr             string
-	secureMetrics           bool
-	enableHTTP2             bool
+	enableLeaderElection     bool
+	leaderElectionNamespace  string
+	probeAddr                string
+	metricsAddr              string
+	secureMetrics            bool
+	enableHTTP2              bool
+	namespaces               string
+	propagatedNodeConditions string
 }
 
 func parseFlags(flags *Flags) {
@@ -87,6 +92,10 @@ func parseFlags(flags *Flags) {
 		"If set the metrics endpoint is served securely")
 	flag.BoolVar(&flags.enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&flags.namespaces, "namespaces", "",
+		"Comma-separated list of namespaces the controller will watch. If empty, all namespaces are watched.")
+	flag.StringVar(&flags.propagatedNodeConditions, "propagated-node-conditions", "",
+		"Comma-separated list of Kube node conditions, by type field, the controller will parse when setting drain reason on Slurm nodes.")
 	flag.Parse()
 }
 
@@ -116,11 +125,38 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
+	var defaultNamespaces map[string]cache.Config
+	if flags.namespaces != "" {
+		defaultNamespaces = make(map[string]cache.Config)
+		for ns := range strings.SplitSeq(flags.namespaces, ",") {
+			ns = strings.TrimSpace(ns)
+			if ns != "" {
+				defaultNamespaces[ns] = cache.Config{}
+			}
+		}
+		setupLog.Info("watching namespaces", "namespaces", flags.namespaces)
+	}
+
+	var propagatedNodeConditions []corev1.NodeConditionType
+	if flags.propagatedNodeConditions != "" {
+		propagatedNodeConditions = make([]corev1.NodeConditionType, 0)
+		for nodeCondType := range strings.SplitSeq(flags.propagatedNodeConditions, ",") {
+			nodeCondType = strings.TrimSpace(nodeCondType)
+			if nodeCondType != "" {
+				propagatedNodeConditions = append(propagatedNodeConditions, corev1.NodeConditionType(nodeCondType))
+			}
+		}
+		setupLog.Info("propagated node conditions", "propagatedNodeConditions", flags.propagatedNodeConditions)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: server.Options{
 			TLSOpts:     tlsOpts,
 			BindAddress: flags.metricsAddr,
+		},
+		Cache: cache.Options{
+			DefaultNamespaces: defaultNamespaces,
 		},
 		HealthProbeBindAddress:        flags.probeAddr,
 		LeaderElection:                flags.enableLeaderElection,
@@ -146,7 +182,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Accounting")
 		os.Exit(1)
 	}
-	if err := nodeset.NewReconciler(mgr.GetClient(), clientMap).SetupWithManager(mgr); err != nil {
+	if err := nodeset.NewReconciler(mgr.GetClient(), clientMap, propagatedNodeConditions).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NodeSet")
 		os.Exit(1)
 	}

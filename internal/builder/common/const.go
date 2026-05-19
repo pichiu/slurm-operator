@@ -38,9 +38,12 @@ const (
 	JwksKeyPath           = SlurmEtcDir + "/" + JwksKeyFile
 	JwksAuthAltParameters = "jwks=" + JwksKeyPath
 
-	LogTimeFormat = "iso8601,format_stderr"
+	LogTimeFormat = "thread_id"
 
 	DevNull = "/dev/null"
+
+	SlurmLivez  = "/livez"
+	SlurmReadyz = "/readyz"
 )
 
 // Worker
@@ -80,7 +83,7 @@ const (
 
 const (
 	AnnotationAuthSlurmKeyHash = slinkyv1beta1.SlinkyPrefix + "slurm-key-hash"
-	AnnotationAuthJwtKeyHash   = slinkyv1beta1.SlinkyPrefix + "jwt--key-hash"
+	AnnotationAuthJwtKeyHash   = slinkyv1beta1.SlinkyPrefix + "jwt-key-hash"
 )
 
 const (

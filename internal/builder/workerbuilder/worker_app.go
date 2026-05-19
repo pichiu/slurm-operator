@@ -221,7 +221,7 @@ func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controll
 			StartupProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
 					HTTPGet: &corev1.HTTPGetAction{
-						Path: "/livez",
+						Path: common.SlurmLivez,
 						Port: intstr.FromString(labels.WorkerApp),
 					},
 				},
@@ -231,7 +231,7 @@ func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controll
 			LivenessProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
 					HTTPGet: &corev1.HTTPGetAction{
-						Path: "/livez",
+						Path: common.SlurmLivez,
 						Port: intstr.FromString(labels.WorkerApp),
 					},
 				},
@@ -241,7 +241,7 @@ func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controll
 			ReadinessProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
 					HTTPGet: &corev1.HTTPGetAction{
-						Path: "/readyz",
+						Path: common.SlurmReadyz,
 						Port: intstr.FromString(labels.WorkerApp),
 					},
 				},
@@ -263,7 +263,7 @@ func (b *WorkerBuilder) slurmdContainer(nodeset *slinkyv1beta1.NodeSet, controll
 						Command: []string{
 							"/usr/bin/sh",
 							"-c",
-							"scontrol update nodename=$(hostname) state=down reason='Pod is terminating' && scontrol delete nodename=$(hostname);",
+							"scontrol update nodename=$(hostname) state=down reason='slurm-operator: Pod is terminating';",
 						},
 					},
 				},
@@ -352,7 +352,7 @@ func (b *WorkerBuilder) getWorkerHashes(ctx context.Context, nodeset *slinkyv1be
 
 	hashMap := map[string]string{
 		common.AnnotationSshdConfHash: crypto.CheckSum([]byte(sshConfig.Data[loginbuilder.SshdConfigFile])),
-		common.AnnotationSssdConfHash: crypto.CheckSum([]byte(sssdSecret.StringData[sssdConfRefKey])),
+		common.AnnotationSssdConfHash: crypto.CheckSum(sssdSecret.Data[sssdConfRefKey]),
 	}
 
 	return hashMap, nil

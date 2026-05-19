@@ -13,13 +13,19 @@ primitives. For design-level details, see
   - [Table of Contents](#table-of-contents)
   - [Querying Slurm State from Kubernetes](#querying-slurm-state-from-kubernetes)
   - [Cordoning Pods](#cordoning-pods)
-  - [Custom Drain Reasons via Node Annotations](#custom-drain-reasons-via-node-annotations)
+  - [Custom Drain Reasons](#custom-drain-reasons)
+    - [Dynamically from Node Conditions](#dynamically-from-node-conditions)
+    - [Override with Node Annotation](#override-with-node-annotation)
   - [Influencing Scale-in Order](#influencing-scale-in-order)
     - [Pod Deletion Cost](#pod-deletion-cost)
     - [Pod Deadline](#pod-deadline)
   - [Workload Disruption Protection](#workload-disruption-protection)
   - [External Drain Preservation](#external-drain-preservation)
   - [External Health Checker Integration Pattern](#external-health-checker-integration-pattern)
+  - [Node Identity](#node-identity)
+    - [StatefulSet Mode](#statefulset-mode)
+      - [Node Pinning](#node-pinning)
+    - [DaemonSet Mode](#daemonset-mode)
 
 <!-- mdformat-toc end -->
 
@@ -84,11 +90,76 @@ kubectl annotate pod <pod> nodeset.slinky.slurm.net/pod-cordon-
 The operator will undrain the Slurm node, provided the Kubernetes node is not
 cordoned and the drain reason was set by the operator.
 
-## Custom Drain Reasons via Node Annotations
+## Custom Drain Reasons
 
-When a Kubernetes node is cordoned, the operator drains all NodeSet pods on that
-node. By default, the drain reason is auto-generated. To provide a custom reason
-that propagates to Slurm, set the `node-cordon-reason` annotation on the
+When a Kubernetes node is cordoned, the operator cordons all NodeSet pods on the
+Kubernetes node by ensure the Slurm node is drained. By default, the drain
+reason propagated to Slurm is a generic message.
+
+It should be noted that the operator always prefixed the Slurm node drain reason
+with `slurm-operator:`. This is done to indicate if the reason was set by the
+operator, or some other source. If set by the operator, it can freely manage the
+drain state, otherwise it will not make changes to drain state until cleared by
+the other source.
+
+To customize the drain reason, either configure the operator with
+`propagatedNodeConditions`, or set the `node-cordon-reason` annotation on
+Kubernetes nodes. See sections below for details.
+
+### Dynamically from Node Conditions
+
+It is common for tooling to set Kubernetes node conditions to indicate status of
+the node, especially to report problems. Remediation tooling typically triggers
+off of certain node conditions to take action, such as cordoning or draining the
+node due to system instability or failure.
+
+The operator can be configured to use those same node conditions when generating
+the Slurm node drain reason, keeping Kubernetes and Slurm context in sync. When
+installing or upgrading the slurm-operator helm chart, set a non-empty value for
+`propagatedNodeConditions`, where the value is a list of Kubernetes
+[node conditions][node-condition], by the type field. Each matching node
+condition type is formatted and joined to generate the final Slurm node drain
+reason.
+
+For example, you have [Node Problem Detector][node-problem-detector] (NPD)
+running in your Kubernetes cluster with a custom plugin for hardware monitoring
+which defines a `CPUProblem` and `GPUProblem` condition type, and you want to
+propagate them to Slurm automatically. In the slurm-operator's values.yaml, you
+would add the node condition types `CPUProblem` and `GPUProblem` to the
+`propagatedNodeConditions` list.
+
+```yaml
+propagatedNodeConditions:
+  - CPUProblem
+  - GPUProblem
+```
+
+Let's assume your NPD plugins each reported a CPU and GPU issue by updating the
+Kubernetes node condition with the following.
+
+```yaml
+status:
+  conditions:
+  - type: CPUProblem
+    reason: BadCPU
+    message: "CPU 17: Machine Check Exception"
+  - type: GPUProblem
+    reason: GpuCountMismatch
+    message: "GPU count mismatch detected: Node has 3, expected 4"
+```
+
+Then, when that Kubernetes node is cordoned, the Slurm node drain message would
+be the following.
+
+```console
+$ scontrol show node node-0 | grep -Po "NodeName=[^ ]+|[ ]+Reason=[^\[\]]+"
+NodeName=node-0
+   Reason=slurm-operator: (BadCPU: CPU 17: Machine Check Exception); (GpuCountMismatch: GPU count mismatch detected: Node has 3, expected 4)
+```
+
+### Override with Node Annotation
+
+To provide a custom reason, set the `node-cordon-reason` annotation on the
 Kubernetes node **before** cordoning it:
 
 ```sh
@@ -96,11 +167,12 @@ kubectl annotate node <node> nodeset.slinky.slurm.net/node-cordon-reason="GPU EC
 kubectl cordon <node>
 ```
 
-The operator reads the annotation and uses its value as the Slurm drain reason,
-prefixed with `slurm-operator:`. The resulting reason in Slurm will be:
+When the Kubernetes node is cordoned, the Slurm node drain message would be:
 
 ```console
-slurm-operator: GPU ECC error detected
+$ scontrol show node node-0 | grep -Po "NodeName=[^ ]+|[ ]+Reason=[^\[\]]+"
+NodeName=node-0
+   Reason=slurm-operator: GPU ECC error detected
 ```
 
 To clean up after uncordoning:
@@ -224,7 +296,70 @@ sequenceDiagram
     NS->>SAPI: Undrain Slurm nodes
 ```
 
-See
-[Custom Drain Reasons via Node Annotations](#custom-drain-reasons-via-node-annotations)
-and [Cordoning Pods](#cordoning-pods) for the kubectl commands used in each
-step.
+See [Override with Node Annotation](#override-with-node-annotation) and
+[Cordoning Pods](#cordoning-pods) for the kubectl commands used in each step.
+
+## Node Identity
+
+A Nodeset's scalingMode will determine whether its pods, which represent Slurm
+nodes, are loosely or strictly mapped to the Kubernetes nodes they run on.
+
+### StatefulSet Mode
+
+When using `scalingMode=StatefulSet`, Nodeset pods are loosely mapped to
+Kubernetes nodes and may be rescheduled freely.
+
+If a stricter node mapping is preferred, node pinning can be enabled on the
+NodeSet.
+
+#### Node Pinning
+
+When enabled, NodeSet pods are pinned to the Kubernetes node it was first
+scheduled on. Once a pod is assigned to a node, subsequent recreations of that
+pod (e.g. after eviction, deletion, or node maintenance) will always land on the
+same physical node. If the node is unavailable, the pod remains in `Pending`
+state until the node comes back. However, node pinnings will be removed under
+specific conditions: if the node no longer exists; or if the new NodeSet pod no
+longer matches the node it was pinned to (e.g. affinity, nodeSelector).
+
+To use node pinning, set `pinToNode=true` on a NodeSet in the Slurm Helm chart:
+
+```yaml
+nodesets:
+  slinky:
+    pinToNode: true
+```
+
+Or directly in the NodeSet CR:
+
+```yaml
+apiVersion: slinky.slurm.net/v1beta1
+kind: NodeSet
+metadata:
+  name: gpu-workers
+spec:
+  pinToNode: true
+  replicas: 4
+```
+
+When enabled, the controller:
+
+1. The pod is initially scheduled like normal.
+1. Records the node-to-pod mapping in `status.nodeToOrdinal`.
+1. On subsequent pod recreations, a [node affinity][node-affinity] is added to
+   the pod such that it can only be scheduled to the recorded node.
+1. Reset the node in the node-to-pod map if:
+   - the Kubernetes node no longer exists
+   - the NodeSet pod template no longer matches the recorded Kubernetes Node
+     (e.g. affinity, nodeSelector).
+
+### DaemonSet Mode
+
+When using `scalingMode=Daemonset`, Nodeset pods are strictly mapped to
+Kubernetes nodes and share the hostname of the node they run on.
+
+<!-- Links -->
+
+[node-affinity]: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#node-affinity
+[node-condition]: https://kubernetes.io/docs/reference/node/node-status/#condition
+[node-problem-detector]: https://github.com/kubernetes/node-problem-detector

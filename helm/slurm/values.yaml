@@ -186,6 +186,10 @@ controller:
       # requests:
       #   cpu: 1
       #   memory: 1Gi
+  # -- Indicates how reconfigure is handled when Slurm configuration changes.
+  # When true, the reconfigure sidecar will do reconfigure inplace.
+  # When false, the pod will be recreated and reconfigure done only on startup.
+  inplaceReconfigure: false
   # Reconfigure container configurations.
   reconfigure:
     # -- (string \| object) The image to use.
@@ -526,12 +530,8 @@ sssd:
     [pam]
 
     [domain/DEFAULT]
-    auth_provider = ldap
-    id_provider = ldap
-    ldap_uri = ldap://ldap.example.com
-    ldap_search_base = dc=example,dc=com
-    ldap_user_search_base = ou=Users,dc=example,dc=com
-    ldap_group_search_base = ou=Groups,dc=example,dc=com
+    id_provider = files
+    auth_provider = files
 
 # -- (map[string]object) Slurm LoginSet (sackd, sshd, sssd) configurations.
 loginsets:
@@ -657,11 +657,15 @@ nodesets:
     scalingMode: StatefulSet
     # -- Number of replicas to deploy. Ignored when scalingMode is daemonset.
     replicas: 1
+    # -- Pin pods to their initially assigned Kubernetes nodes.
+    pinToNode: false
     # -- Taint the Kubernetes nodes on which nodeset pods are scheduled with NoExecute.
     taintKubeNodes: false
     # -- Use a Pod Disruption Budget to protect pods in this NodeSet when Slurm jobs are running on them
     # Ref: https://kubernetes.io/docs/tasks/run-application/configure-pdb/
     workloadDisruptionProtection: true
+    # -- Control when the operator deletes Slurm node records. One of: Never; NodeNotFound.
+    pruneSlurmNodeRecords: Never
     # -- How many places to pad with zeroes when constructing the pod ordinal.
     ordinalPadding: 0
     # slurmd container configurations.
@@ -819,3 +823,14 @@ vendor:
       jobMappingDir: "/var/lib/dcgm-exporter/job-mapping"
       # -- Script execution priority (lower numbers run first)
       scriptPriority: "90"
+
+# -- Extra Kubernetes objects to deploy alongside the chart.
+# Each entry is rendered as a standalone Kubernetes object.
+# Supports Helm templating (e.g. {{ .Release.Namespace }}).
+extraObjects: []
+  # - apiVersion: v1
+  #   kind: ConfigMap
+  #   metadata:
+  #     name: extra-config
+  #   data:
+  #     key: value

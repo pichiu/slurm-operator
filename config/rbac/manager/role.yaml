@@ -24,15 +24,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - node
-  - pods/binding
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - nodes
   verbs:
   - get
@@ -70,6 +61,13 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - apiGroups:
   - monitoring.coreos.com
   resources:

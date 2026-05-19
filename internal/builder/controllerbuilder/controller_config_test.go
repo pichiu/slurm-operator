@@ -136,7 +136,7 @@ func TestBuilder_BuildControllerConfig(t *testing.T) {
 						Name: "slurm",
 					},
 					Spec: slinkyv1beta1.ControllerSpec{
-						AccountingRef: slinkyv1beta1.ObjectReference{
+						AccountingRef: &slinkyv1beta1.ObjectReference{
 							Name: "slurm",
 						},
 						ConfigFileRefs: []slinkyv1beta1.ObjectReference{
@@ -398,7 +398,7 @@ func TestBuilder_BuildControllerConfigExternal(t *testing.T) {
 					Name: "slurm",
 				},
 				Spec: slinkyv1beta1.ControllerSpec{
-					AccountingRef: slinkyv1beta1.ObjectReference{
+					AccountingRef: &slinkyv1beta1.ObjectReference{
 						Name: "slurm",
 					},
 					ConfigFileRefs: []slinkyv1beta1.ObjectReference{
@@ -493,9 +493,7 @@ func Test_buildNodeSetConf(t *testing.T) {
 					},
 				},
 			},
-			want: `#
-### COMPUTE & PARTITION ###
-NodeSet=nodeset-0 Feature=nodeset-0
+			want: `NodeSet=nodeset-0 Feature=nodeset-0
 NodeSet=nodeset-1 Feature=nodeset-1
 PartitionName=nodeset-1 Nodes=nodeset-1 MaxTime=UNLIMITED OverSubscribe=EXCLUSIVE
 NodeSet=nodeset-2 Feature=nodeset-2
@@ -537,9 +535,7 @@ func Test_buildPrologEpilogConf(t *testing.T) {
 			name:          "prolog",
 			prologScripts: []string{"prolog-0.sh", "prolog-1.sh", "prolog-2.sh"},
 			epilogScripts: []string{},
-			want: `#
-### PROLOG & EPILOG ###
-Prolog=prolog-0.sh
+			want: `Prolog=prolog-0.sh
 Prolog=prolog-1.sh
 Prolog=prolog-2.sh`,
 		},
@@ -547,9 +543,7 @@ Prolog=prolog-2.sh`,
 			name:          "epilog",
 			prologScripts: []string{},
 			epilogScripts: []string{"epilog-0.sh", "epilog-1.sh", "epilog-2.sh"},
-			want: `#
-### PROLOG & EPILOG ###
-Epilog=epilog-0.sh
+			want: `Epilog=epilog-0.sh
 Epilog=epilog-1.sh
 Epilog=epilog-2.sh`,
 		},
@@ -557,9 +551,7 @@ Epilog=epilog-2.sh`,
 			name:          "both",
 			prologScripts: []string{"prolog-0.sh", "prolog-1.sh", "prolog-2.sh"},
 			epilogScripts: []string{"epilog-0.sh", "epilog-1.sh", "epilog-2.sh"},
-			want: `#
-### PROLOG & EPILOG ###
-Prolog=prolog-0.sh
+			want: `Prolog=prolog-0.sh
 Prolog=prolog-1.sh
 Prolog=prolog-2.sh
 Epilog=epilog-0.sh
@@ -608,9 +600,7 @@ func Test_buildPrologEpilogSlurmctldConf(t *testing.T) {
 			name:                   "prolog",
 			prologSlurmctldScripts: []string{"prolog-slurmctld-0.sh", "prolog-slurmctld-1.sh", "prolog-slurmctld-2.sh"},
 			epilogSlurmctldScripts: []string{},
-			want: `#
-### SLURMCTLD PROLOG & EPILOG ###
-PrologSlurmctld=/etc/slurm/prolog-slurmctld-0.sh
+			want: `PrologSlurmctld=/etc/slurm/prolog-slurmctld-0.sh
 PrologSlurmctld=/etc/slurm/prolog-slurmctld-1.sh
 PrologSlurmctld=/etc/slurm/prolog-slurmctld-2.sh`,
 		},
@@ -618,9 +608,7 @@ PrologSlurmctld=/etc/slurm/prolog-slurmctld-2.sh`,
 			name:                   "epilog",
 			prologSlurmctldScripts: []string{},
 			epilogSlurmctldScripts: []string{"epilog-slurmctld-0.sh", "epilog-slurmctld-1.sh", "epilog-slurmctld-2.sh"},
-			want: `#
-### SLURMCTLD PROLOG & EPILOG ###
-EpilogSlurmctld=/etc/slurm/epilog-slurmctld-0.sh
+			want: `EpilogSlurmctld=/etc/slurm/epilog-slurmctld-0.sh
 EpilogSlurmctld=/etc/slurm/epilog-slurmctld-1.sh
 EpilogSlurmctld=/etc/slurm/epilog-slurmctld-2.sh`,
 		},
@@ -628,9 +616,7 @@ EpilogSlurmctld=/etc/slurm/epilog-slurmctld-2.sh`,
 			name:                   "both",
 			prologSlurmctldScripts: []string{"prolog-slurmctld-0.sh", "prolog-slurmctld-1.sh", "prolog-slurmctld-2.sh"},
 			epilogSlurmctldScripts: []string{"epilog-slurmctld-0.sh", "epilog-slurmctld-1.sh", "epilog-slurmctld-2.sh"},
-			want: `#
-### SLURMCTLD PROLOG & EPILOG ###
-PrologSlurmctld=/etc/slurm/prolog-slurmctld-0.sh
+			want: `PrologSlurmctld=/etc/slurm/prolog-slurmctld-0.sh
 PrologSlurmctld=/etc/slurm/prolog-slurmctld-1.sh
 PrologSlurmctld=/etc/slurm/prolog-slurmctld-2.sh
 EpilogSlurmctld=/etc/slurm/epilog-slurmctld-0.sh

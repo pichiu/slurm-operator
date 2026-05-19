@@ -6,14 +6,17 @@ package common
 import (
 	_ "embed"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
+	"k8s.io/utils/set"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/builder/labels"
+	"github.com/SlinkyProject/slurm-operator/internal/utils/config"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/domainname"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/structutils"
 )
@@ -218,6 +221,17 @@ func (b *CommonBuilder) GetContainerResourceLimits(container corev1.Container) (
 	return cpu, memory
 }
 
+func JwtSecretProjection(secret *corev1.SecretKeySelector, path string) corev1.SecretProjection {
+	return corev1.SecretProjection{
+		LocalObjectReference: corev1.LocalObjectReference{
+			Name: secret.Name,
+		},
+		Items: []corev1.KeyToPath{
+			{Key: secret.Key, Path: path},
+		},
+	}
+}
+
 func JwksConfigProjection(configMap *corev1.ConfigMapKeySelector, path string) corev1.ConfigMapProjection {
 	return corev1.ConfigMapProjection{
 		LocalObjectReference: corev1.LocalObjectReference{
@@ -227,4 +241,86 @@ func JwksConfigProjection(configMap *corev1.ConfigMapKeySelector, path string) c
 			{Key: configMap.Key, Path: path},
 		},
 	}
+}
+
+// BuildMergedConfig returns a slurm.conf snippet containing merged parameter options.
+func BuildMergedConfig(confRaw string, mergeConfig map[string][]string) string {
+	conf := config.NewBuilder().WithFinalNewline(false)
+
+	lineVals := parseSlurmConfKV(confRaw)
+
+	paramKeys := structutils.Keys(mergeConfig)
+	slices.Sort(paramKeys)
+	for _, pKey := range paramKeys {
+		val, ok := lineVals[strings.ToLower(pKey)]
+		if !ok {
+			continue
+		}
+		mergeVals := set.New(mergeConfig[pKey]...)
+		seenOptKeys := set.New[string]()
+		for _, mv := range mergeVals.UnsortedList() {
+			seenOptKeys.Insert(parseKVKey(mv))
+		}
+		for v := range strings.SplitSeq(val, ",") {
+			if v == "" {
+				continue
+			}
+			olk := parseKVKey(v)
+			if seenOptKeys.Has(olk) {
+				continue
+			}
+			mergeVals.Insert(strings.ToLower(v))
+			seenOptKeys.Insert(olk)
+		}
+		conf.AddProperty(config.NewProperty(pKey, strings.Join(mergeVals.SortedList(), ",")))
+	}
+
+	return conf.Build()
+}
+
+func parseSlurmConfKV(confRaw string) map[string]string {
+	out := make(map[string]string)
+	var b strings.Builder
+	setKV := func(logical string) {
+		logical = strings.TrimSpace(logical)
+		if logical == "" {
+			return
+		}
+		key, val, ok := strings.Cut(logical, "=")
+		if !ok {
+			return
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		if key == "" || val == "" || strings.ContainsAny(val, " \n") {
+			return
+		}
+		out[strings.ToLower(key)] = val
+	}
+	for line := range strings.SplitSeq(confRaw, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		line = strings.TrimRight(line, " \t")
+		if line == "" {
+			continue
+		}
+		if before, ok := strings.CutSuffix(line, `\`); ok {
+			b.WriteString(before)
+			continue
+		}
+		b.WriteString(line)
+		setKV(b.String())
+		b.Reset()
+	}
+	if b.Len() > 0 {
+		setKV(b.String())
+	}
+	return out
+}
+
+func parseKVKey(s string) string {
+	k, _, _ := strings.Cut(s, "=")
+	return strings.ToLower(k)
 }

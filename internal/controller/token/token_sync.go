@@ -19,14 +19,10 @@ import (
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/controller/token/slurmjwt"
 	"github.com/SlinkyProject/slurm-operator/internal/defaults"
+	"github.com/SlinkyProject/slurm-operator/internal/syncsteps"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 	jwt "github.com/golang-jwt/jwt/v5"
 )
-
-type SyncStep struct {
-	Name string
-	Sync func(ctx context.Context, token *slinkyv1beta1.Token) error
-}
 
 // Sync implements control logic for synchronizing a Token.
 func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error {
@@ -43,7 +39,10 @@ func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error
 	token = token.DeepCopy()
 	defaults.SetTokenDefaults(token)
 
-	if token.DeletionTimestamp.IsZero() {
+	if !token.DeletionTimestamp.IsZero() {
+		logger.Info("Token is being deleted, skipping sync", "request", req)
+		return nil
+	} else {
 		now := time.Now()
 		key := objectutils.KeyFunc(token)
 		expirationTime, err := r.getExpTime(ctx, token)
@@ -55,15 +54,15 @@ func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error
 		}
 	}
 
-	syncSteps := []SyncStep{
+	steps := []syncsteps.Step[*slinkyv1beta1.Token]{
 		{
 			Name: "Secret",
-			Sync: func(ctx context.Context, token *slinkyv1beta1.Token) error {
+			SyncFn: func(ctx context.Context, token *slinkyv1beta1.Token) error {
 				object, err := r.builder.BuildTokenSecret(token)
 				if err != nil {
 					return fmt.Errorf("failed to build: %w", err)
 				}
-				if err := objectutils.SyncObject(r.Client, ctx, object, false); err != nil {
+				if err := objectutils.SyncObject(r.Client, ctx, r.eventRecorder, token, object, false); err != nil {
 					return fmt.Errorf("failed to sync object (%s): %w", klog.KObj(object), err)
 				}
 				return nil
@@ -71,7 +70,7 @@ func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error
 		},
 		{
 			Name: "Refresh",
-			Sync: func(ctx context.Context, token *slinkyv1beta1.Token) error {
+			SyncFn: func(ctx context.Context, token *slinkyv1beta1.Token) error {
 				if !ptr.Deref(token.Spec.Refresh, defaults.DefaultTokenRefresh) {
 					return nil
 				}
@@ -102,7 +101,7 @@ func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error
 				if err != nil {
 					return fmt.Errorf("failed to build: %w", err)
 				}
-				if err := objectutils.SyncObject(r.Client, ctx, object, true); err != nil {
+				if err := objectutils.SyncObject(r.Client, ctx, r.eventRecorder, token, object, true); err != nil {
 					return fmt.Errorf("failed to sync object (%s): %w", klog.KObj(object), err)
 				}
 
@@ -111,16 +110,13 @@ func (r *TokenReconciler) Sync(ctx context.Context, req reconcile.Request) error
 		},
 	}
 
-	for _, s := range syncSteps {
-		if err := s.Sync(ctx, token); err != nil {
-			e := fmt.Errorf("[%s]: %w", s.Name, err)
-			errors := []error{e}
-			if err := r.syncStatus(ctx, token); err != nil {
-				e := fmt.Errorf("[%s]: %w", s.Name, err)
-				errors = append(errors, e)
-			}
-			return utilerrors.NewAggregate(errors)
+	if err := syncsteps.Sync(ctx, r.eventRecorder, token, steps); err != nil {
+		errs := []error{err}
+		if err := r.syncStatus(ctx, token); err != nil {
+			e := fmt.Errorf("failed status syncFn: %w", err)
+			errs = append(errs, e)
 		}
+		return utilerrors.NewAggregate(errs)
 	}
 
 	return r.syncStatus(ctx, token)
@@ -132,7 +128,7 @@ func (r *TokenReconciler) getExpTime(ctx context.Context, token *slinkyv1beta1.T
 		return time.Time{}, err
 	}
 	jwtRef := token.JwtRef()
-	signingKey, err := r.refResolver.GetSecretKeyRef(ctx, &jwtRef.SecretKeySelector, jwtRef.Namespace)
+	signingKey, err := r.refResolver.GetSecretKeyRef(ctx, jwtRef.SecretKeySelector, jwtRef.Namespace)
 	if err != nil {
 		return time.Time{}, err
 	}

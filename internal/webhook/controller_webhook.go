@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,7 +23,8 @@ import (
 	"github.com/SlinkyProject/slurm-operator/internal/utils/structutils"
 )
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=slinky.slurm.net,resources=controllers,verbs=delete;create;update
 
 type ControllerWebhook struct {
 	client.Client
@@ -39,13 +39,9 @@ func (r *ControllerWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 // +kubebuilder:webhook:path=/validate-slinky-slurm-net-v1beta1-controller,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,sideEffects=None,groups=slinky.slurm.net,resources=controllers,verbs=create;update,versions=v1beta1,name=controller-v1beta1.kb.io,admissionReviewVersions=v1beta1
 
 var _ admission.Validator[*slinkyv1beta1.Controller] = &ControllerWebhook{}
-
-const validTableNameRegex = `[0-9a-zA-Z$_]+`
-const warnTableNameRegex = `[A-Z]+`
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (r *ControllerWebhook) ValidateCreate(ctx context.Context, controller *slinkyv1beta1.Controller) (admission.Warnings, error) {
@@ -58,16 +54,6 @@ func (r *ControllerWebhook) ValidateCreate(ctx context.Context, controller *slin
 	if len(controllerName) > 40 {
 		errs = append(errs, fmt.Errorf("ClusterName exceeds 40 characters (%d): %s",
 			len(controllerName), controllerName))
-	}
-	validTableName := regexp.MustCompile(validTableNameRegex)
-	if !validTableName.MatchString(controllerName) {
-		errs = append(errs, fmt.Errorf("ClusterName must match regex `%s`: %s",
-			validTableNameRegex, controllerName))
-	}
-	warnTableName := regexp.MustCompile(warnTableNameRegex)
-	if warnTableName.MatchString(controllerName) {
-		warns = append(warns, fmt.Sprintf("ClusterName contains capital letters: %s",
-			controllerName))
 	}
 
 	return warns, utilerrors.NewAggregate(errs)

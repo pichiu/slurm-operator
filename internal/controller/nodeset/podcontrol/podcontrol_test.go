@@ -18,7 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/ktesting"
 	"k8s.io/utils/ptr"
@@ -36,7 +36,7 @@ func init() {
 	utilruntime.Must(slinkyv1beta1.AddToScheme(scheme.Scheme))
 }
 
-func newPodControl(client client.Client, recorder record.EventRecorder) *realPodControl {
+func newPodControl(client client.Client, recorder events.EventRecorder) *realPodControl {
 	return &realPodControl{
 		Client:     client,
 		recorder:   recorder,
@@ -144,7 +144,7 @@ func Test_realPodControl_CreateNodeSetPod(t *testing.T) {
 	pod := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx     context.Context
@@ -161,7 +161,7 @@ func Test_realPodControl_CreateNodeSetPod(t *testing.T) {
 			name: "Invalid pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -174,7 +174,7 @@ func Test_realPodControl_CreateNodeSetPod(t *testing.T) {
 			name: "Valid pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -187,7 +187,7 @@ func Test_realPodControl_CreateNodeSetPod(t *testing.T) {
 			name: "Duplicate pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(pod.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -217,7 +217,7 @@ func Test_realPodControl_DeleteNodeSetPod(t *testing.T) {
 	pod := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx     context.Context
@@ -234,7 +234,7 @@ func Test_realPodControl_DeleteNodeSetPod(t *testing.T) {
 			name: "Non-existent pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -247,7 +247,7 @@ func Test_realPodControl_DeleteNodeSetPod(t *testing.T) {
 			name: "Existing pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(pod.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -278,7 +278,7 @@ func Test_realPodControl_UpdateNodeSetPod(t *testing.T) {
 	pvc := ptr.To(newPVC("datadir-foo-0"))
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx     context.Context
@@ -295,7 +295,7 @@ func Test_realPodControl_UpdateNodeSetPod(t *testing.T) {
 			name: "Consistent pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(pod.DeepCopy(), pvc.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -308,7 +308,7 @@ func Test_realPodControl_UpdateNodeSetPod(t *testing.T) {
 			name: "Inconsistent identity",
 			fields: fields{
 				Client:   fake.NewFakeClient(pod.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -325,7 +325,7 @@ func Test_realPodControl_UpdateNodeSetPod(t *testing.T) {
 			name: "Inconsistent storage",
 			fields: fields{
 				Client:   fake.NewFakeClient(pod.DeepCopy(), pvc.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -360,7 +360,7 @@ func Test_realPodControl_PodPVCsMatchRetentionPolicy(t *testing.T) {
 	pvc := newPVC("datadir-foo-0")
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx     context.Context
@@ -378,7 +378,7 @@ func Test_realPodControl_PodPVCsMatchRetentionPolicy(t *testing.T) {
 			name: "PVC NotFound",
 			fields: fields{
 				Client:   fake.NewFakeClient(nodeset.DeepCopy(), pod.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -392,7 +392,7 @@ func Test_realPodControl_PodPVCsMatchRetentionPolicy(t *testing.T) {
 			name: "PVC Found",
 			fields: fields{
 				Client:   fake.NewFakeClient(nodeset.DeepCopy(), pod.DeepCopy(), pvc.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -413,7 +413,7 @@ func Test_realPodControl_PodPVCsMatchRetentionPolicy(t *testing.T) {
 					}).
 					WithRuntimeObjects(nodeset.DeepCopy(), pod.DeepCopy(), pvc.DeepCopy()).
 					Build(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -449,7 +449,7 @@ func Test_realPodControl_UpdatePodPVCsForRetentionPolicy(t *testing.T) {
 	pod := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, 0, "")
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx     context.Context
@@ -466,7 +466,7 @@ func Test_realPodControl_UpdatePodPVCsForRetentionPolicy(t *testing.T) {
 			name: "NotFound",
 			fields: fields{
 				Client:   fake.NewFakeClient(nodeset.DeepCopy(), pod.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -486,7 +486,7 @@ func Test_realPodControl_UpdatePodPVCsForRetentionPolicy(t *testing.T) {
 					}).
 					WithRuntimeObjects(nodeset.DeepCopy(), pod.DeepCopy()).
 					Build(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -608,7 +608,7 @@ func Test_realPodControl_IsPodPVCsStale(t *testing.T) {
 			pod.SetUID("123")
 		}
 		c := fake.NewFakeClient(nodeset.DeepCopy(), pod.DeepCopy(), pvcList.DeepCopy())
-		r := NewPodControl(c, record.NewFakeRecorder(10))
+		r := NewPodControl(c, events.NewFakeRecorder(10))
 		expected := tc.expected
 		// Note that the error isn't / can't be tested.
 		if stale, _ := r.IsPodPVCsStale(context.TODO(), &nodeset, &pod); stale != expected {
@@ -628,7 +628,7 @@ func Test_realPodControl_createPersistentVolumeClaims(t *testing.T) {
 	pvc := newPVC("datadir-foo-0")
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx     context.Context
@@ -645,7 +645,7 @@ func Test_realPodControl_createPersistentVolumeClaims(t *testing.T) {
 			name: "Create",
 			fields: fields{
 				Client:   fake.NewFakeClient(nodeset.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -658,7 +658,7 @@ func Test_realPodControl_createPersistentVolumeClaims(t *testing.T) {
 			name: "Already Exists",
 			fields: fields{
 				Client:   fake.NewFakeClient(nodeset.DeepCopy(), pvc.DeepCopy()),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -676,7 +676,7 @@ func Test_realPodControl_createPersistentVolumeClaims(t *testing.T) {
 					pvc.Finalizers = append(pvc.Finalizers, "foo")
 					return fake.NewFakeClient(nodeset.DeepCopy(), pvc)
 				}(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -696,7 +696,7 @@ func Test_realPodControl_createPersistentVolumeClaims(t *testing.T) {
 					}).
 					WithRuntimeObjects(nodeset.DeepCopy()).
 					Build(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),
@@ -716,7 +716,7 @@ func Test_realPodControl_createPersistentVolumeClaims(t *testing.T) {
 					}).
 					WithRuntimeObjects(nodeset.DeepCopy()).
 					Build(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:     context.TODO(),

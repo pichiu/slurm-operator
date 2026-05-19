@@ -1,5 +1,18 @@
 # Slurm
 
+## Table of Contents
+
+<!-- mdformat-toc start --slug=github --no-anchors --maxlevel=6 --minlevel=1 -->
+
+- [Slurm](#slurm)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Architecture](#architecture)
+
+<!-- mdformat-toc end -->
+
+## Overview
+
 > [Slurm] is an open source, fault-tolerant, and highly scalable cluster
 > management and job scheduling system for large and small Linux clusters. Slurm
 > requires no kernel modifications for its operation and is relatively

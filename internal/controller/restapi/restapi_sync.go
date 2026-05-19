@@ -15,13 +15,9 @@ import (
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/defaults"
+	"github.com/SlinkyProject/slurm-operator/internal/syncsteps"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/objectutils"
 )
-
-type SyncStep struct {
-	Name string
-	Sync func(ctx context.Context, cluster *slinkyv1beta1.RestApi) error
-}
 
 // Sync implements control logic for synchronizing a Restapi.
 func (r *RestapiReconciler) Sync(ctx context.Context, req reconcile.Request) error {
@@ -38,15 +34,20 @@ func (r *RestapiReconciler) Sync(ctx context.Context, req reconcile.Request) err
 	restapi = restapi.DeepCopy()
 	defaults.SetRestApiDefaults(restapi)
 
-	syncSteps := []SyncStep{
+	if !restapi.DeletionTimestamp.IsZero() {
+		logger.Info("Restapi is being deleted, skipping sync", "request", req)
+		return nil
+	}
+
+	steps := []syncsteps.Step[*slinkyv1beta1.RestApi]{
 		{
 			Name: "Service",
-			Sync: func(ctx context.Context, restapi *slinkyv1beta1.RestApi) error {
+			SyncFn: func(ctx context.Context, restapi *slinkyv1beta1.RestApi) error {
 				object, err := r.builder.BuildRestapiService(restapi)
 				if err != nil {
 					return fmt.Errorf("failed to build: %w", err)
 				}
-				if err := objectutils.SyncObject(r.Client, ctx, object, true); err != nil {
+				if err := objectutils.SyncObject(r.Client, ctx, r.eventRecorder, restapi, object, true); err != nil {
 					return fmt.Errorf("failed to sync object (%s): %w", klog.KObj(object), err)
 				}
 				return nil
@@ -54,12 +55,12 @@ func (r *RestapiReconciler) Sync(ctx context.Context, req reconcile.Request) err
 		},
 		{
 			Name: "Deployment",
-			Sync: func(ctx context.Context, restapi *slinkyv1beta1.RestApi) error {
+			SyncFn: func(ctx context.Context, restapi *slinkyv1beta1.RestApi) error {
 				object, err := r.builder.BuildRestapi(restapi)
 				if err != nil {
 					return fmt.Errorf("failed to build: %w", err)
 				}
-				if err := objectutils.SyncObject(r.Client, ctx, object, true); err != nil {
+				if err := objectutils.SyncObject(r.Client, ctx, r.eventRecorder, restapi, object, true); err != nil {
 					return fmt.Errorf("failed to sync object (%s): %w", klog.KObj(object), err)
 				}
 				return nil
@@ -67,16 +68,13 @@ func (r *RestapiReconciler) Sync(ctx context.Context, req reconcile.Request) err
 		},
 	}
 
-	for _, s := range syncSteps {
-		if err := s.Sync(ctx, restapi); err != nil {
-			e := fmt.Errorf("[%s]: %w", s.Name, err)
-			errors := []error{e}
-			if err := r.syncStatus(ctx, restapi); err != nil {
-				e := fmt.Errorf("[%s]: %w", s.Name, err)
-				errors = append(errors, e)
-			}
-			return utilerrors.NewAggregate(errors)
+	if err := syncsteps.Sync(ctx, r.eventRecorder, restapi, steps); err != nil {
+		errs := []error{err}
+		if err := r.syncStatus(ctx, restapi); err != nil {
+			e := fmt.Errorf("failed status syncFn: %w", err)
+			errs = append(errs, e)
 		}
+		return utilerrors.NewAggregate(errs)
 	}
 
 	return r.syncStatus(ctx, restapi)

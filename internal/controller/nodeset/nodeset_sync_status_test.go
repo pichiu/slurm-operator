@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/controller/history"
 	"k8s.io/utils/ptr"
@@ -561,6 +562,16 @@ func TestNodeSetReconciler_updateNodeSetPodConditions(t *testing.T) {
 		Status:  corev1.ConditionTrue,
 		Message: "",
 	}
+	downCondition := corev1.PodCondition{
+		Type:    slurmconditions.PodConditionDown,
+		Status:  corev1.ConditionTrue,
+		Message: "",
+	}
+	notRespondingCondition := corev1.PodCondition{
+		Type:    slurmconditions.PodConditionNotResponding,
+		Status:  corev1.ConditionTrue,
+		Message: "",
+	}
 
 	controller := &slinkyv1beta1.Controller{
 		ObjectMeta: metav1.ObjectMeta{
@@ -654,6 +665,76 @@ func TestNodeSetReconciler_updateNodeSetPodConditions(t *testing.T) {
 				wantErr: nil,
 			}
 		}(),
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 2)
+			pods := make([]*corev1.Pod, 0)
+			for i := range 2 {
+				pod := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, i, hash)
+				pod = makePodHealthy(pod)
+				pod.Status.Conditions = append(pod.Status.Conditions, downCondition, drainCondition, notRespondingCondition)
+				pods = append(pods, pod)
+			}
+			podList := &corev1.PodList{
+				Items: structutils.DereferenceList(pods),
+			}
+			c := fake.NewClientBuilder().WithRuntimeObjects(nodeset, podList).WithStatusSubresource(nodeset).Build()
+
+			return testCaseFields{
+				name: "Slurm States remain Down+Drain+NotResponding (second reconcile)",
+				fields: fields{
+					Client: c,
+				},
+				args: args{
+					ctx:  context.TODO(),
+					pods: pods,
+					nodeStatus: &slurmcontrol.SlurmNodeStatus{
+						NodeStates: func(pods []*corev1.Pod) map[string][]corev1.PodCondition {
+							ns := make(map[string][]corev1.PodCondition)
+							for _, pod := range pods {
+								ns[pod.Name] = append(ns[pod.Name], downCondition, drainCondition, notRespondingCondition)
+							}
+							return ns
+						}(pods),
+					},
+				},
+				wantErr: nil,
+			}
+		}(),
+		func() testCaseFields {
+			nodeset := newNodeSet("foo", controller.Name, 2)
+			pods := make([]*corev1.Pod, 0)
+			for i := range 2 {
+				pod := nodesetutils.NewNodeSetStatefulSetPod(fake.NewFakeClient(), nodeset, controller, i, hash)
+				pod = makePodHealthy(pod)
+				pod.Status.Conditions = append(pod.Status.Conditions, downCondition, drainCondition, notRespondingCondition)
+				pods = append(pods, pod)
+			}
+			podList := &corev1.PodList{
+				Items: structutils.DereferenceList(pods),
+			}
+			c := fake.NewClientBuilder().WithRuntimeObjects(nodeset, podList).WithStatusSubresource(nodeset).Build()
+
+			return testCaseFields{
+				name: "Slurm States transition from Down+Drain+NotResponding to Idle",
+				fields: fields{
+					Client: c,
+				},
+				args: args{
+					ctx:  context.TODO(),
+					pods: pods,
+					nodeStatus: &slurmcontrol.SlurmNodeStatus{
+						NodeStates: func(pods []*corev1.Pod) map[string][]corev1.PodCondition {
+							ns := make(map[string][]corev1.PodCondition)
+							for _, pod := range pods {
+								ns[pod.Name] = append(ns[pod.Name], idleCondition)
+							}
+							return ns
+						}(pods),
+					},
+				},
+				wantErr: nil,
+			}
+		}(),
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -672,8 +753,10 @@ func TestNodeSetReconciler_updateNodeSetPodConditions(t *testing.T) {
 					t.Errorf("NodeSetReconciler.updateNodeSetPodConditions() error = %v", err)
 					return
 				}
+				var slurmCondCount int
 				for _, condition := range pod.Status.Conditions {
 					if strings.HasPrefix(string(condition.Type), slurmconditions.StatePrefix) {
+						slurmCondCount++
 						var found bool
 						for _, nodeCondition := range ns {
 							if condition.Type == nodeCondition.Type &&
@@ -686,6 +769,10 @@ func TestNodeSetReconciler_updateNodeSetPodConditions(t *testing.T) {
 							as a Slurm node state (%v)`, condition, ns)
 						}
 					}
+				}
+				if slurmCondCount != len(ns) {
+					t.Errorf("NodeSetReconciler.updateNodeSetPodConditions() SlurmNodeState condition count = %d, want %d",
+						slurmCondCount, len(ns))
 				}
 			}
 		})
@@ -773,6 +860,226 @@ func TestNodeSetReconciler_updateNodeSetStatus(t *testing.T) {
 				if diff := cmp.Diff(tt.args.newStatus, &got.Status); diff != "" {
 					t.Errorf("unexpected status (-want,+got):\n%s", diff)
 				}
+			}
+		})
+	}
+}
+
+func Test_calculateOrdinalToNode(t *testing.T) {
+	node0 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node-0",
+		},
+	}
+
+	node1 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node-1",
+		},
+	}
+
+	makeNodeSet := func(name string, replicas int32, pinToNode bool, ordinalToNode map[string]string) *slinkyv1beta1.NodeSet {
+		ns := newNodeSet(name, "slurm", replicas)
+		ns.Spec.PinToNode = pinToNode
+		ns.Status.OrdinalToNode = ordinalToNode
+		return ns
+	}
+
+	makePod := func(name string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+		}
+	}
+
+	makeScheduledPod := func(name, nodeName string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+			Spec: corev1.PodSpec{
+				NodeName: nodeName,
+			},
+		}
+	}
+
+	makeRunningPod := func(name, nodeName string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+			Spec: corev1.PodSpec{
+				NodeName: nodeName,
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+			},
+		}
+	}
+
+	type args struct {
+		nodeset *slinkyv1beta1.NodeSet
+		pods    []*corev1.Pod
+	}
+	tests := []struct {
+		name    string
+		client  client.Client
+		args    args
+		want    map[string]string
+		wantErr bool
+	}{
+		{
+			name:   "empty, disabled",
+			client: fake.NewFakeClient(node0.DeepCopy()),
+			args: args{
+				nodeset: makeNodeSet("foo", 2, false, nil),
+				pods: []*corev1.Pod{
+					makeRunningPod("foo-0", "node-0"),
+				},
+			},
+		},
+		{
+			name:   "no map, enabled",
+			client: fake.NewFakeClient(node0.DeepCopy(), node1.DeepCopy()),
+			args: args{
+				nodeset: makeNodeSet("foo", 2, true, nil),
+				pods: []*corev1.Pod{
+					makeRunningPod("foo-0", "node-0"),
+					makeRunningPod("foo-1", "node-1"),
+				},
+			},
+			want: map[string]string{
+				"0": "node-0",
+				"1": "node-1",
+			},
+		},
+		{
+			name:   "existing map, enabled",
+			client: fake.NewFakeClient(node0.DeepCopy(), node1.DeepCopy()),
+			args: args{
+				nodeset: makeNodeSet("foo", 2, true, map[string]string{
+					"0": "node-0",
+					"1": "node-1",
+				}),
+				pods: []*corev1.Pod{
+					makeRunningPod("foo-0", "node-0"),
+					makeRunningPod("foo-1", "node-1"),
+				},
+			},
+			want: map[string]string{
+				"0": "node-0",
+				"1": "node-1",
+			},
+		},
+		{
+			name:   "existing map, disable",
+			client: fake.NewFakeClient(node0.DeepCopy(), node1.DeepCopy()),
+			args: args{
+				nodeset: makeNodeSet("foo", 2, false, map[string]string{
+					"0": "node-0",
+					"1": "node-1",
+				}),
+				pods: []*corev1.Pod{
+					makeRunningPod("foo-0", "node-0"),
+					makeRunningPod("foo-1", "node-1"),
+				},
+			},
+		},
+		{
+			name:   "mixed pod states",
+			client: fake.NewFakeClient(node0.DeepCopy(), node1.DeepCopy()),
+			args: args{
+				nodeset: makeNodeSet("foo", 2, true, nil),
+				pods: []*corev1.Pod{
+					makeRunningPod("foo-0", "node-0"),
+					makeScheduledPod("foo-1", "node-1"),
+					makePod("foo-2"),
+				},
+			},
+			want: map[string]string{
+				"0": "node-0",
+			},
+		},
+		{
+			name:   "pinned pod, pod recreated and pending",
+			client: fake.NewFakeClient(node0.DeepCopy()),
+			args: args{
+				nodeset: makeNodeSet("foo", 2, true, map[string]string{
+					"0": "node-0",
+				}),
+				pods: []*corev1.Pod{
+					makePod("foo-0"),
+				},
+			},
+			want: map[string]string{
+				"0": "node-0",
+			},
+		},
+		{
+			name:   "pinned pod, node deleted",
+			client: fake.NewFakeClient(),
+			args: args{
+				nodeset: makeNodeSet("foo", 2, true, map[string]string{
+					"0": "node-0",
+				}),
+				pods: []*corev1.Pod{
+					makePod("foo-0"),
+				},
+			},
+		},
+		{
+			name:   "pinned pod, updated NodeSet selector, pod recreated",
+			client: fake.NewFakeClient(node0.DeepCopy(), node1.DeepCopy()),
+			args: args{
+				nodeset: func() *slinkyv1beta1.NodeSet {
+					nodeset := makeNodeSet("foo", 2, true, map[string]string{
+						"0": "node-0",
+						"1": "node-1",
+					})
+					nodeset.Spec.Template.PodSpecWrapper.NodeSelector = map[string]string{
+						"foo": "bar",
+					}
+					return nodeset
+				}(),
+				pods: []*corev1.Pod{
+					makeRunningPod("foo-0", "node-0"),
+					func() *corev1.Pod {
+						pod := makePod("foo-1")
+						pod.Spec.NodeSelector = map[string]string{
+							"foo": "bar",
+						}
+						return pod
+					}(),
+				},
+			},
+		},
+		{
+			name:   "change mode to DaemonSet",
+			client: fake.NewFakeClient(node0.DeepCopy()),
+			args: args{
+				nodeset: func() *slinkyv1beta1.NodeSet {
+					nodeset := makeNodeSet("foo", 2, true, map[string]string{
+						"0": "node-0",
+					})
+					nodeset.Spec.ScalingMode = slinkyv1beta1.ScalingModeDaemonset
+					return nodeset
+				}(),
+				pods: []*corev1.Pod{
+					makePod("foo-0"),
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newNodeSetController(tt.client, nil)
+			got, err := r.calculateOrdinalToNode(context.TODO(), tt.args.nodeset, tt.args.pods)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NodeSetReconciler.calculateNodeToOrdinal() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if diff := cmp.Diff(tt.want, got); !apiequality.Semantic.DeepEqual(got, tt.want) && diff != "" {
+				t.Errorf("NodeSetReconciler.calculateNodeToOrdinal() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

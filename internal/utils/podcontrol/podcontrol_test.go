@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/kubernetes/pkg/securitycontext"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,7 +67,7 @@ func Test_realPodControl_CreatePods(t *testing.T) {
 
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx           context.Context
@@ -86,7 +86,7 @@ func Test_realPodControl_CreatePods(t *testing.T) {
 			name: "Create pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:           ctx,
@@ -101,7 +101,7 @@ func Test_realPodControl_CreatePods(t *testing.T) {
 			name: "Invalid pod template spec",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:           ctx,
@@ -116,7 +116,7 @@ func Test_realPodControl_CreatePods(t *testing.T) {
 			name: "Invalid controller ref",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:           ctx,
@@ -149,7 +149,7 @@ func Test_realPodControl_CreatePodsWithGenerateName(t *testing.T) {
 
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx           context.Context
@@ -169,7 +169,7 @@ func Test_realPodControl_CreatePodsWithGenerateName(t *testing.T) {
 			name: "Create pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:           ctx,
@@ -184,7 +184,7 @@ func Test_realPodControl_CreatePodsWithGenerateName(t *testing.T) {
 			name: "Invalid pod template spec",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:           ctx,
@@ -199,7 +199,7 @@ func Test_realPodControl_CreatePodsWithGenerateName(t *testing.T) {
 			name: "Invalid controller ref",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:           ctx,
@@ -231,7 +231,7 @@ func Test_realPodControl_CreateThisPod(t *testing.T) {
 
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx    context.Context
@@ -248,7 +248,7 @@ func Test_realPodControl_CreateThisPod(t *testing.T) {
 			name: "Create pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx: ctx,
@@ -287,7 +287,7 @@ func Test_realPodControl_createPods(t *testing.T) {
 
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx    context.Context
@@ -304,7 +304,7 @@ func Test_realPodControl_createPods(t *testing.T) {
 			name: "Create pod",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx: ctx,
@@ -325,7 +325,7 @@ func Test_realPodControl_createPods(t *testing.T) {
 			name: "No Namespace/Name",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx: ctx,
@@ -344,7 +344,7 @@ func Test_realPodControl_createPods(t *testing.T) {
 			name: "No Labels",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx: ctx,
@@ -385,7 +385,7 @@ func Test_realPodControl_DeletePod(t *testing.T) {
 
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx       context.Context
@@ -403,7 +403,7 @@ func Test_realPodControl_DeletePod(t *testing.T) {
 			name: "Delete pod",
 			fields: fields{
 				Client:   fake.NewClientBuilder().WithObjects(pod).Build(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:       ctx,
@@ -417,7 +417,7 @@ func Test_realPodControl_DeletePod(t *testing.T) {
 			name: "Pod Not Found",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(10),
+				recorder: events.NewFakeRecorder(10),
 			},
 			args: args{
 				ctx:       ctx,
@@ -450,7 +450,7 @@ func Test_realPodControl_PatchPod(t *testing.T) {
 	}
 	type fields struct {
 		Client   client.Client
-		recorder record.EventRecorder
+		recorder events.EventRecorder
 	}
 	type args struct {
 		ctx       context.Context
@@ -468,7 +468,7 @@ func Test_realPodControl_PatchPod(t *testing.T) {
 			name: "strategic merge",
 			fields: fields{
 				Client:   fake.NewFakeClient(pod.DeepCopy()),
-				recorder: record.NewFakeRecorder(5),
+				recorder: events.NewFakeRecorder(5),
 			},
 			args: args{
 				ctx:       context.TODO(),
@@ -491,7 +491,7 @@ func Test_realPodControl_PatchPod(t *testing.T) {
 			name: "failed merge",
 			fields: fields{
 				Client:   fake.NewFakeClient(),
-				recorder: record.NewFakeRecorder(5),
+				recorder: events.NewFakeRecorder(5),
 			},
 			args: args{
 				ctx:       context.TODO(),

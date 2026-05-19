@@ -16,6 +16,8 @@
 *.swp
 *.swo
 bin/*
+govulncheck-vulns.csv
+build-docs/*
 
 # Test binary, built with `go test -c`
 *.test
@@ -137,3 +139,4 @@ values-*.yaml
 .helm_ls_cache
 docs/build/html
 *debug_bin*
+bake-metadata.json

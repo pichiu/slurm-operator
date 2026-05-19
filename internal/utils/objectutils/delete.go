@@ -13,13 +13,19 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 )
 
-func DeleteObject(c client.Client, ctx context.Context, newObj client.Object) error {
+const (
+	ReasonDeleteSucceeded = "DeleteSucceeded"
+	ReasonDeleteFailed    = "DeleteFailed"
+)
+
+func DeleteObject(c client.Client, ctx context.Context, eventRecorder events.EventRecorder, eventObj client.Object, newObj client.Object) error {
 	logger := log.FromContext(ctx)
 
 	var oldObj client.Object
@@ -67,8 +73,14 @@ func DeleteObject(c client.Client, ctx context.Context, newObj client.Object) er
 	}
 
 	if err := c.Delete(ctx, oldObj); err != nil {
+		if eventRecorder != nil {
+			eventRecorder.Eventf(eventObj, oldObj, corev1.EventTypeWarning, ReasonDeleteFailed, "Delete", "Error deleting: %T %s: %v", oldObj, key, err)
+		}
 		return fmt.Errorf("error deleting %s: %w", key, err)
 	}
 
+	if eventRecorder != nil {
+		eventRecorder.Eventf(eventObj, oldObj, corev1.EventTypeNormal, ReasonDeleteSucceeded, "Delete", "Deleted %T: %s", oldObj, key)
+	}
 	return nil
 }
