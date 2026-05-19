@@ -129,57 +129,67 @@ func (e *NodesetEventHandler) enqueueRequest(
 
 ### 3. Sync Steps
 
-Reconcile 時會依序執行以下步驟：
+Reconcile 時使用 `syncsteps.Sync()` 執行以下步驟，**所有步驟都會嘗試，錯誤會被收集而非立即中斷**：
 
-**檔案**：`internal/controller/controller/controller_sync.go:39-112`
+**檔案**：`internal/controller/controller/controller_sync.go`
 
 ```go
-syncSteps := []SyncStep{
+steps := []syncsteps.Step[*slinkyv1beta1.Controller]{
     {
         Name: "Service",
-        Sync: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
+        SyncFn: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
             // 建立/更新 Service
         },
     },
     {
         Name: "Config",  // ← slurm.conf 在這裡產生
-        Sync: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
+        SyncFn: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
             var object *corev1.ConfigMap
+            var err error
             if controller.Spec.External {
                 object, err = r.builder.BuildControllerConfigExternal(controller)
             } else {
                 object, err = r.builder.BuildControllerConfig(controller)
             }
-            // 更新 ConfigMap
-            if err := objectutils.SyncObject(r.Client, ctx, object, true); err != nil {
-                return err
+            // 更新 ConfigMap，並發送 Kubernetes events
+            if err := objectutils.SyncObject(r.Client, ctx, r.eventRecorder, controller, object, true); err != nil {
+                return fmt.Errorf("failed to sync object (%s): %w", klog.KObj(object), err)
             }
             return nil
         },
     },
     {
         Name: "StatefulSet",
-        Sync: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
+        SyncFn: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
             // 建立/更新 StatefulSet
         },
     },
     {
         Name: "ServiceMonitor",
-        Sync: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
+        SyncFn: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
             // 建立/更新/刪除 ServiceMonitor（用於 Prometheus 監控）
         },
     },
 }
+
+// 所有步驟都會執行，錯誤聚合後返回
+if err := syncsteps.Sync(ctx, r.eventRecorder, controller, steps); err != nil {
+    // ...
+}
 ```
+
+> `syncsteps.Sync()` 位於 `internal/syncsteps/syncsteps.go`，實作嘗試所有步驟並聚合錯誤，確保單一步驟失敗不會阻止其他步驟執行。
 
 ### 4. BuildControllerConfig - 產生 slurm.conf
 
-**檔案**：`internal/builder/controller_config.go:29-152`
+**檔案**：`internal/builder/controllerbuilder/controller_config.go`
 
 ```go
-func (b *Builder) BuildControllerConfig(controller *slinkyv1beta1.Controller) (*corev1.ConfigMap, error) {
+func (b *ControllerBuilder) BuildControllerConfig(controller *slinkyv1beta1.Controller) (*corev1.ConfigMap, error) {
+    ctx := context.TODO()
+
     // 1. 讀取 Accounting 設定
-    accounting, err := b.refResolver.GetAccounting(ctx, controller.Spec.AccountingRef)
+    accounting, err := b.refResolver.GetAccounting(ctx, *controller.Spec.AccountingRef)
 
     // 2. 讀取所有屬於此 Controller 的 NodeSets
     nodesetList, err := b.refResolver.GetNodeSetsForController(ctx, controller)
@@ -187,15 +197,15 @@ func (b *Builder) BuildControllerConfig(controller *slinkyv1beta1.Controller) (*
     // 3. 讀取額外設定檔、腳本等
 
     // 4. 建立 ConfigMap
-    opts := ConfigMapOpts{
-        Key:      controller.ConfigKey(),
-        Metadata: controller.Spec.Template.PodMetadata,
-        Data: map[string]string{
-            slurmConfFile: buildSlurmConf(controller, accounting, nodesetList, ...),
+    opts := common.ConfigMapOpts{
+        Key: controller.ConfigKey(),
+        Data: common.ControllerConfigData{
+            SlurmConfFile: buildSlurmConf(
+                controller, accounting, nodesetList, ...),
         },
     }
 
-    return b.BuildConfigMap(opts, controller)
+    return b.CommonBuilder.BuildConfigMap(opts, controller)
 }
 ```
 

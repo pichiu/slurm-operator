@@ -97,35 +97,106 @@ spec:
 
   # Partition 設定
   partition:
-    enabled: true                              # 是否建立 partition（預設 true）
+    enabled: true                              # 是否建立 partition（預設 false，需明確啟用）
     config: "Default=YES MaxTime=7-00:00:00"   # 額外參數（可選）
 ```
 
+> **注意**：`partition.enabled` 的預設值自 v1.1+ 起已從 `true` 改為 **`false`**。  
+> 若要建立 Partition，必須明確設定 `partition.enabled: true`。
+
 ### API 定義
 
-**檔案**：`api/v1beta1/nodeset_types.go:114-124`
+**檔案**：`api/v1beta1/nodeset_types.go`
 
 ```go
 // NodeSetPartition defines the Slurm partition configuration for the NodeSet.
 type NodeSetPartition struct {
     // Enabled will create a partition for this NodeSet.
-    // +default:=true
+    // +default:=false
     Enabled bool `json:"enabled"`
 
     // Config is added to the NodeSet's partition line.
+    // Ref: https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION
     // +optional
     Config string `json:"config,omitzero"`
 }
 ```
 
+## NodeSet 重要欄位說明
+
+### ScalingMode（擴展模式）
+
+`scalingMode` 控制 NodeSet 如何管理 Pod：
+
+| 值 | 說明 | 預設 |
+|----|------|------|
+| `StatefulSet` | 固定副本數，類似 StatefulSet | ✅ 預設 |
+| `DaemonSet` | 每個符合條件的節點各一個 Pod | 需明確設定 |
+
+```yaml
+spec:
+  scalingMode: DaemonSet  # 每個符合 nodeSelector 的節點自動調度一個 Pod
+```
+
+> **注意**：`scalingMode=DaemonSet` 時，`replicas` 欄位會被忽略。
+
+### OrdinalPadding（序號補零）
+
+僅適用於 `scalingMode=StatefulSet`，控制 Pod 名稱中序號的補零位數：
+
+```yaml
+spec:
+  ordinalPadding: 3  # Pod 名稱為 compute-001, compute-002, ...
+```
+
+### PinToNode（節點固定）
+
+僅適用於 `scalingMode=StatefulSet`，控制 Pod 是否固定在首次調度的 Kubernetes 節點上：
+
+```yaml
+spec:
+  pinToNode: true  # Pod 永遠運行在初次調度的節點（預設 false）
+```
+
+固定關係在以下情況會被重設：
+- 節點不存在
+- 新的 NodeSet Pod 不再符合原本固定的節點
+
+### PruneSlurmNodeRecords（清理 Slurm 節點紀錄）
+
+控制 operator 何時自動刪除 Slurm 節點紀錄：
+
+| 值 | 說明 | 預設 |
+|----|------|------|
+| `Never` | 從不自動清理 | ✅ 預設 |
+| `NodeNotFound` | 當 Kubernetes 節點不存在時清理（僅 DaemonSet 模式） | 需明確設定 |
+
+```yaml
+spec:
+  pruneSlurmNodeRecords: NodeNotFound  # 僅適用於 scalingMode=DaemonSet
+```
+
+### TaintKubeNodes（污點標記）
+
+> **已廢棄（Deprecated）**：此欄位將在未來版本移除，建議不再使用。
+
+### WorkloadDisruptionProtection
+
+保護正在執行 Slurm 作業的 Pod 不被驅逐。現在型別為 `*bool`（指標，支援 null）：
+
+```yaml
+spec:
+  workloadDisruptionProtection: true  # 預設 true
+```
+
 ## Partition 設定範例
 
-### 範例 1：基本 Partition（使用預設值）
+### 範例 1：基本 Partition（需明確啟用）
 
 ```yaml
 spec:
   partition:
-    enabled: true
+    enabled: true  # 必須明確設定，預設為 false
 ```
 
 **產生的 slurm.conf**：
@@ -149,12 +220,12 @@ NodeSet=compute Feature=compute
 PartitionName=compute Nodes=compute Default=YES MaxTime=7-00:00:00 State=UP
 ```
 
-### 範例 3：不建立 Partition
+### 範例 3：不建立 Partition（預設行為）
 
 ```yaml
 spec:
   partition:
-    enabled: false
+    enabled: false  # 這是預設值，可省略
 ```
 
 **產生的 slurm.conf**：

@@ -136,7 +136,7 @@ spec:
   controllerRef:
     name: slurm
   partition:
-    enabled: true
+    enabled: true    # 必須明確設定，v1.1+ 預設為 false
     config: "Default=YES MaxTime=7-00:00:00"
 ```
 
@@ -144,10 +144,10 @@ spec:
 
 | 優點 | 缺點 |
 |------|------|
-| 宣告式管理 | 需要等待 ConfigMap 同步（1-2 分鐘） |
-| 變更持久化 | 無法即時生效 |
-| 與 K8s 原生整合 | Partition 必須對應 NodeSet |
-| GitOps 友善 | 無法獨立建立 Partition |
+| 宣告式管理 | 預設透過 Pod 重建生效（可用 inplaceReconfigure 改為 1-2 分鐘） |
+| 變更持久化 | Partition 必須對應 NodeSet |
+| 與 K8s 原生整合 | 無法獨立建立 Partition |
+| GitOps 友善 | - |
 
 ## 管理策略建議
 

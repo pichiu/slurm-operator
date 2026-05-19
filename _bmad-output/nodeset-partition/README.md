@@ -6,8 +6,9 @@
 
 - **Partition 是什麼？** Slurm 中的邏輯節點群組，在 slurm.conf 中定義
 - **與 K8s 的關係？** Partition 不是 K8s 資源，而是由 Operator 產生的 slurm.conf 設定
-- **如何啟用？** 在 NodeSet CRD 中設定 `spec.partition.enabled: true`
-- **何時生效？** ConfigMap 更新後，經 kubelet 同步（約 1-2 分鐘）後由 reconfigure sidecar 觸發
+- **如何啟用？** 在 NodeSet CRD 中明確設定 `spec.partition.enabled: true`（v1.1+ **預設為 false**）
+- **何時生效？** 預設透過 Controller Pod 滾動重建（秒級），或選用 sidecar 模式（約 1-2 分鐘）
+- **ScalingMode？** v1.1+ 新增，支援 `StatefulSet`（預設）和 `DaemonSet` 兩種模式
 
 ## 系統架構總覽
 
@@ -79,9 +80,10 @@ flowchart LR
 
 ## 版本資訊
 
-- **文件版本**：1.0.0
-- **適用 Operator 版本**：v1.0+（API v1beta1）
-- **最後更新**：2025-01-09
+- **文件版本**：1.1.0
+- **適用 Operator 版本**：v1.1+（API v1beta1）
+- **最後更新**：2026-05-19
+- **重要變更**：`partition.enabled` 預設值改為 `false`；新增 `ScalingMode`、`PinToNode`、`PruneSlurmNodeRecords` 欄位；`inplaceReconfigure` 預設值改為 `false`
 
 ## 相關資源
 

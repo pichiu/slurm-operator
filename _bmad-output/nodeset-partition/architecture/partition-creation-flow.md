@@ -43,7 +43,7 @@ spec:
     name: slurm
   replicas: 8
   partition:
-    enabled: true
+    enabled: true    # 必須明確設定為 true，v1.1+ 預設為 false
     config: "Default=YES MaxTime=7-00:00:00"
 ```
 
@@ -83,95 +83,96 @@ func (e *NodesetEventHandler) enqueueRequest(...) {
 
 ### 步驟 4-5：Controller Reconcile 執行 Config 步驟
 
-**檔案**：`internal/controller/controller/controller_sync.go:56-74`
+**檔案**：`internal/controller/controller/controller_sync.go:62-79`
 
 ```go
 {
     Name: "Config",
-    Sync: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
+    SyncFn: func(ctx context.Context, controller *slinkyv1beta1.Controller) error {
         var object *corev1.ConfigMap
+        var err error
         if controller.Spec.External {
             object, err = r.builder.BuildControllerConfigExternal(controller)
         } else {
             object, err = r.builder.BuildControllerConfig(controller)
         }
-        // ...
-        if err := objectutils.SyncObject(r.Client, ctx, object, true); err != nil {
-            return err
+        if err != nil {
+            return fmt.Errorf("failed to build: %w", err)
+        }
+        if err := objectutils.SyncObject(r.Client, ctx, r.eventRecorder, controller, object, true); err != nil {
+            return fmt.Errorf("failed to sync object (%s): %w", klog.KObj(object), err)
         }
         return nil
     },
 },
 ```
 
-**檔案**：`internal/builder/controller_config.go:39`
+> Sync Steps 現在使用 `syncsteps.Step` 結構（`internal/syncsteps/syncsteps.go`），支援所有步驟並收集錯誤（而非遇到第一個錯誤就停止）。
+
+**檔案**：`internal/builder/controllerbuilder/controller_config.go:45`
 
 ```go
 // 讀取所有屬於此 Controller 的 NodeSets
 nodesetList, err := b.refResolver.GetNodeSetsForController(ctx, controller)
 ```
 
-### 步驟 6：buildSlurmConf() 產生 Partition 行
+### 步驟 6：buildNodeSetConf() 產生 Partition 行
 
-這是核心邏輯所在。
+這是核心邏輯所在。函數在 v1.1+ 已從 `buildSlurmConf()` 中獨立提取出來。
 
-**檔案**：`internal/builder/controller_config.go:252-279`
+**檔案**：`internal/builder/controllerbuilder/controller_config.go:334-366`
 
 ```go
-if len(nodesetList.Items) > 0 {
-    conf.AddProperty(config.NewPropertyRaw("#"))
-    conf.AddProperty(config.NewPropertyRaw("### COMPUTE & PARTITION ###"))
-}
+// buildNodeSetConf() returns a slurm.conf snippet containing NodeSets and their Partitions.
+func buildNodeSetConf(nodesetList *slinkyv1beta1.NodeSetList) string {
+    conf := config.NewBuilder()
 
-for _, nodeset := range nodesetList.Items {
-    // 決定名稱（使用 Hostname 或 NodeSet 名稱）
-    name := nodeset.Name
-    template := nodeset.Spec.Template.PodSpecWrapper
-    if template.Hostname != "" {
-        name = strings.Trim(template.Hostname, "-")
+    // NodeSet 以名稱排序，保證產生結果穩定（idempotent）
+    sort.Slice(nodesetList.Items, func(i, j int) bool {
+        return nodesetList.Items[i].Name < nodesetList.Items[j].Name
+    })
+
+    for _, nodeset := range nodesetList.Items {
+        // 決定名稱（使用 Hostname 或 NodeSet 名稱）
+        name := nodeset.Name
+        template := nodeset.Spec.Template.PodSpecWrapper
+        if template.Hostname != "" {
+            name = strings.Trim(template.Hostname, "-")
+        }
+
+        // ① 永遠產生 NodeSet 行
+        nodesetLine := []string{
+            fmt.Sprintf("NodeSet=%v", name),
+            fmt.Sprintf("Feature=%v", name),
+        }
+        nodesetLineRendered := strings.Join(nodesetLine, " ")
+        conf.AddProperty(config.NewPropertyRaw(nodesetLineRendered))
+
+        // ② 檢查 partition.enabled（預設 false，需明確啟用）
+        partition := nodeset.Spec.Partition
+        if !partition.Enabled {
+            continue  // 跳過 Partition，只保留 NodeSet
+        }
+
+        // ③ partition.enabled = true → 產生 Partition 行
+        partitionLine := []string{
+            fmt.Sprintf("PartitionName=%v", name),
+            fmt.Sprintf("Nodes=%v", name),
+            partition.Config,  // 使用者提供的額外參數
+        }
+        partitionLineRendered := strings.Join(partitionLine, " ")
+        conf.AddProperty(config.NewPropertyRaw(partitionLineRendered))
     }
 
-    // ① 永遠產生 NodeSet 行
-    nodesetLine := []string{
-        fmt.Sprintf("NodeSet=%v", name),
-        fmt.Sprintf("Feature=%v", name),
-    }
-    nodesetLineRendered := strings.Join(nodesetLine, " ")
-    conf.AddProperty(config.NewPropertyRaw(nodesetLineRendered))
-
-    // ② 檢查 partition.enabled
-    partition := nodeset.Spec.Partition
-    if !partition.Enabled {
-        continue  // 跳過 Partition，只保留 NodeSet
-    }
-
-    // ③ partition.enabled = true → 產生 Partition 行
-    partitionLine := []string{
-        fmt.Sprintf("PartitionName=%v", name),
-        fmt.Sprintf("Nodes=%v", name),
-        partition.Config,  // 使用者提供的額外參數
-    }
-    partitionLineRendered := strings.Join(partitionLine, " ")
-    conf.AddProperty(config.NewPropertyRaw(partitionLineRendered))
+    return conf.WithFinalNewline(false).Build()
 }
 ```
+
+`buildNodeSetConf()` 被 `buildSlurmConf()` 呼叫，並插入 slurm.conf 的 NodeSet/Partition 區段。
 
 ### 步驟 7-8：ConfigMap 更新
 
-**檔案**：`internal/utils/objectutils/patch.go:77-87`
-
-```go
-case *corev1.ConfigMap:
-    obj := oldObj.(*corev1.ConfigMap)
-    if ptr.Deref(obj.Immutable, false) {
-        return nil  // 不可變的 ConfigMap 跳過
-    }
-    patch = client.MergeFrom(obj.DeepCopy())
-    obj.Annotations = structutils.MergeMaps(obj.Annotations, o.Annotations)
-    obj.Labels = structutils.MergeMaps(obj.Labels, o.Labels)
-    obj.Data = o.Data  // 更新 slurm.conf 內容
-    obj.BinaryData = o.BinaryData
-```
+`objectutils.SyncObject` 負責 patch ConfigMap，只有在內容實際變更時才會發出 Kubernetes 事件並執行 Patch。
 
 ## 產生結果對照表
 
