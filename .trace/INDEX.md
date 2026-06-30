@@ -10,11 +10,11 @@
 
 | 類別 | 技術 | 版本 | 用途 |
 |------|------|------|------|
-| Runtime | Go | 1.26.3 | 主要開發語言 |
+| Runtime | Go | 1.26.4 | 主要開發語言（更新於 2026-06-30） |
 | Operator Framework | controller-runtime | 0.23.3 | Kubernetes reconcile loop 框架 |
 | API Extension | Kubernetes CRD | v1beta1 | 自定義資源（slinky.slurm.net） |
 | Kubernetes | k8s.io/api | 0.35.2 | Kubernetes API 型別 |
-| Slurm API | slurm-client | v1.1.0-rc1 | Slurm REST API（v0044）客戶端 |
+| Slurm API | slurm-client | v1.1.0-rc1（0dac744） | Slurm REST API（v0044）客戶端（更新於 2026-06-30） |
 | JWT | golang-jwt/jwt | v5 | Slurm auth/jwt 簽章 |
 | Monitoring | prometheus-operator | 0.89.0 | ServiceMonitor CRD |
 | Database 整合 | mariadb-operator | v0.38.1 | Accounting 資料庫（slurmdbd） |
@@ -156,6 +156,8 @@ kubectl -n slurm get pods
 | **Dynamic Nodes** | slurmd 動態節點模式，不需要預先在 slurm.conf 定義 |
 | **Drain** | Slurm 節點狀態：標記為不接受新 job，但現有 job 繼續執行 |
 | **ScalingMode** | NodeSet 的縮放模式：StatefulSet（固定副本數）或 DaemonSet（每 node 一個 pod） |
+| **ScheduledUpdate** | NodeSet UpdateStrategy 新類型（2026-06-30）：透過 Slurm MAINT reservation 在排程時間窗口內更新 pod |
+| **OversubscribeNode** | NodeSet 選項（2026-06-30）：允許多個 NodeSet pod 共用同一 Kubernetes Node（移除 anti-affinity），不建議生產使用 |
 | **ClientMap** | 執行緒安全的 Slurm REST API client 映射表，key 為 Controller CR 的 namespace/name |
 | **PodBindingWebhook** | Mutating webhook，在 Pod 被排程時注入 Slurm topology annotation |
 | **WorkloadDisruptionProtection** | 透過 PodDisruptionBudget 保護正在執行 Slurm job 的 Pod 不被驅逐 |
