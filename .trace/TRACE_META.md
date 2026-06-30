@@ -2,27 +2,29 @@
 
 ## 分支資訊
 
-- **Base Branch**: `claude/generate-project-docs-LmQlv`
-- **Trace Branch**: `trace/docs`
+- **Base Branch**: `main`
+- **Trace Branch**: `claude/trace-incremental-updates-it6xi8`
 
 ## 最後 Trace 資訊
 
-- **Base Commit Hash**: `d5c49dfd32a12b5215acb5dab52a1fda126e91f5`
-- **日期**: 2026-05-19
-- **Trace 類型**: full
-- **涵蓋範圍**: 全部（609 個路徑，Infrastructure/Operator 型專案）
+- **Base Commit Hash**: `cfb5029f69d5cc0547a03960e05716138fc66a54`
+- **日期**: 2026-06-30
+- **Trace 類型**: incremental
+- **涵蓋範圍**: 全部（~488 個路徑，Infrastructure/Operator 型專案）
 
 ## 文件清單
 
 | 文件 | 對應 Base Commit | 最後更新日期 |
 |------|-----------------|-------------|
-| INDEX.md | d5c49df | 2026-05-19 |
-| ARCHITECTURE.md | d5c49df | 2026-05-19 |
-| DATA_MODEL.md | d5c49df | 2026-05-19 |
-| API_SURFACE.md | d5c49df | 2026-05-19 |
-| DEV_GUIDE.md | d5c49df | 2026-05-19 |
-| CODEBASE_MAP.md | d5c49df | 2026-05-19 |
-| DISCOVERY_LOG.md | d5c49df | 2026-05-19 |
+| INDEX.md | cfb5029 | 2026-06-30 |
+| ARCHITECTURE.md | cfb5029 | 2026-06-30 |
+| DATA_MODEL.md | cfb5029 | 2026-06-30 |
+| API_SURFACE.md | cfb5029 | 2026-06-30 |
+| API_SURFACE_part1.md | cfb5029 | 2026-06-30 |
+| API_SURFACE_part2.md | cfb5029 | 2026-06-30 |
+| DEV_GUIDE.md | cfb5029 | 2026-06-30 |
+| CODEBASE_MAP.md | cfb5029 | 2026-06-30 |
+| DISCOVERY_LOG.md | cfb5029 | 2026-06-30 |
 
 ## 中繼 Context 檔案（`_context/`）
 
@@ -36,12 +38,15 @@
 | `_context/extensions.md` | Stage 2：擴充點、plugin 機制 |
 | `_context/integrations.md` | Stage 2：外部整合（Slurm API、cert-manager、Prometheus 等） |
 | `_context/configuration.md` | Stage 2：設定載入機制、CRD 欄位說明 |
+| `_context/changelog.md` | 增量更新：d5c49df..cfb5029 的變更摘要 |
+| `_context/update_plan.md` | 增量更新：受影響文件清單與更新策略 |
 
 ## 變更歷程
 
 | 日期 | 類型 | Base Commit 範圍 | 更新的文件 | 摘要 |
 |------|------|-----------------|-----------|------|
 | 2026-05-19 | full | initial..d5c49df | 全部 | 初次 trace，含 6 個 _context 中繼檔案 |
+| 2026-06-30 | incremental | d5c49df..cfb5029 | INDEX, ARCHITECTURE, DATA_MODEL, API_SURFACE（+part1/2）, DEV_GUIDE, CODEBASE_MAP, DISCOVERY_LOG | 85 commits：ScheduledUpdate 策略、跨 namespace 禁止、TaintKubeNodes 移除、OversubscribeNode 新增、SlurmClient eventhandler、pprof、Helm PDB/namespace-scope/image.digest |
 
 ## 增量更新說明
 
@@ -49,7 +54,7 @@
 
 ```bash
 # 找出自上次 trace 後新增/修改的檔案
-git diff d5c49dfd32a12b5215acb5dab52a1fda126e91f5..HEAD --name-only
+git diff cfb5029f69d5cc0547a03960e05716138fc66a54..origin/main --name-only -- ':!.trace/'
 
 # 根據變更檔案，決定需要刷新哪些文件：
 # - api/v1beta1/ 變更 → 刷新 DATA_MODEL.md, API_SURFACE.md
