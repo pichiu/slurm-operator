@@ -63,10 +63,13 @@ slurm-operator/
 │       └── workload-isolation.md   # 工作負載隔離
 │
 ├── hack/                       # 開發工具腳本
-│   ├── kind.sh                     # 建立 kind 本機測試叢集
+│   ├── kind.sh                     # 建立 kind 本機測試叢集（含 openldap 範例）
 │   ├── kind.yaml                   # kind 設定
 │   ├── watch.sh                    # 本機開發 watch 腳本
 │   ├── README.md.gotmpl            # Helm README 模板
+│   ├── profile.sh                  # ★ 新增（2026-06-30）pprof profiling 腳本
+│   ├── fix-vulns.sh                # ★ 新增（2026-06-30）govulncheck 漏洞修復腳本
+│   ├── openldap-values.yaml        # ★ 新增（2026-06-30）OpenLDAP kind 測試設定
 │   └── resources/                  # 測試用資源 YAML
 │
 ├── helm/                       # Helm Charts
@@ -121,7 +124,11 @@ slurm-operator/
 │   │   ├── restapi/                # RestApi CRD controller
 │   │   ├── slurmclient/            # ★ Slurm client 管理（JWT 產生、client 建立）
 │   │   │   ├── slurmclient_controller.go
-│   │   │   └── slurmclient_sync.go       # JWT 生命週期管理 + slurmclient.NewClient()
+│   │   │   ├── slurmclient_sync.go       # JWT 生命週期管理 + slurmclient.NewClient()
+│   │   │   ├── eventhandler/             # ★ 新增（2026-06-30）RestAPI 事件監聽
+│   │   │   │   └── eventhandler_restapi.go  # 監聽 RestAPI 變更以觸發 SlurmClient reconcile
+│   │   │   └── utils/                    # ★ 新增（2026-06-30）排序工具
+│   │   │       └── sort.go               # deterministic RestAPI 選取排序邏輯
 │   │   └── token/                  # Token CRD controller（JWT 輸出到 Secret）
 │   │       ├── token_controller.go
 │   │       ├── token_sync.go
@@ -195,6 +202,8 @@ slurm-operator/
 | 修改 Controller（slurmctld）調和邏輯 | `internal/controller/controller/` | `controller_sync.go` |
 | 修改 JWT 產生邏輯 | `internal/controller/token/slurmjwt/` | `token.go` |
 | 修改 Slurm client 認證更新 | `internal/controller/slurmclient/` | `slurmclient_sync.go` |
+| 修改 SlurmClient 觸發邏輯（RestAPI 事件） | `internal/controller/slurmclient/eventhandler/` | `eventhandler_restapi.go` |
+| 修改 SlurmClient 選取 RestAPI 策略 | `internal/controller/slurmclient/utils/` | `sort.go` |
 | 新增/修改 slurm.conf 設定產生 | `internal/builder/controllerbuilder/` | `controller_config.go` |
 | 新增/修改 slurmd pod 規格 | `internal/builder/workerbuilder/` | `worker_app.go` |
 | 修改 NodeSet webhook 驗證 | `internal/webhook/` | `nodeset_webhook.go` |
