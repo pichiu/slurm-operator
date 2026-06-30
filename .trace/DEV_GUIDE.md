@@ -23,7 +23,7 @@
 
 | 工具 | 版本要求 | 說明 |
 |------|---------|------|
-| Go | 1.26+ | 主要開發語言 |
+| Go | 1.26.4+ | 主要開發語言（toolchain 升至 1.26.4，2026-06-30） |
 | Docker / Buildx | 28.5.2+ | 映像建置（或 podman） |
 | kubectl | — | 叢集操作 |
 | Helm | v3 | Chart 安裝與打包 |
@@ -182,7 +182,64 @@ make helm-unittest          # 快照測試
 make helm-unittest-update   # 更新快照（修改 chart 後執行）
 make helm-validate          # lint + dependency update
 make govulncheck            # 輸出 govulncheck-vulns.csv，有 fixed_version 則失敗
+bash hack/fix-vulns.sh      # 自動修復 govulncheck 發現的漏洞（新增 2026-06-30）
 ```
+
+### Helm 新增功能（2026-06-30）
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+
+**PodDisruptionBudget（PDB）**
+Operator、Webhook、RestApi 現在都支援 PDB，且與 HA 設定連動：
+
+```yaml
+# slurm-operator chart
+operator:
+  highAvailability:
+    enabled: true   # PDB 自動啟用
+    pdb:
+      maxUnavailable: 1
+
+# slurm chart
+restapi:
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+```
+
+**Image Digest Pinning**
+可以透過 `image.digest` 固定映像的 SHA256 digest（優先於 tag）：
+
+```yaml
+operator:
+  image:
+    tag: "26.05"
+    digest: "sha256:abc123..."  # 若設定，優先使用 digest
+```
+
+**Operator 安全設定**
+
+```yaml
+operator:
+  nodeSelector:
+    kubernetes.io/os: linux
+  securityContext:         # Pod 層級
+    runAsNonRoot: true
+  containerSecurityContext:  # Container 層級
+    allowPrivilegeEscalation: false
+```
+
+**NodeSet/LoginSet 預設值抽象化**
+新增 `nodesetDefaults` 和 `loginsetDefaults` 物件，可全域設定預設值：
+
+```yaml
+nodesetDefaults:
+  replicas: 1
+  image:
+    tag: "26.05-ubuntu26.04"
+```
+
+**預設映像版本**：`26.05-ubuntu26.04`（從 `26.05-ubuntu24.04` 更新）
 
 ---
 
@@ -334,9 +391,52 @@ spec:
 
 Webhook 在 `create`/`update` 時會發出警告，但仍接受棄用欄位，未來版本可能移除。
 
-### `TaintKubeNodes` 已棄用
+### `TaintKubeNodes` 已移除（2026-06-30）
 
-NodeSet spec 中的 `taintKubeNodes` 欄位已標記為 `Deprecated`，webhook 會主動警告。請改用其他節點隔離機制。
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+NodeSet spec 中的 `taintKubeNodes` 欄位已在 commit `afccda1` 中正式移除（原為 Deprecated）。
+若既有 YAML 中仍有此欄位，需移除（admission webhook 不會報錯，但欄位將被忽略）。
+
+### pprof 效能分析（新增，2026-06-30）
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+Operator 現在內建 pprof HTTP 端點，供本地效能分析使用：
+
+```bash
+# 啟動 pprof（預設監聽 localhost:6060）
+# 透過 hack/profile.sh 連接到 operator pod
+bash hack/profile.sh
+
+# 直接取得 CPU profile（30 秒）
+go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+```
+
+> ⚠️ pprof 端點不應對外公開，僅供本地 port-forward 使用。
+
+### Webhook Failure Policy（更新，2026-06-30）
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+Webhook 的 `failurePolicy` 預設已改為 `Ignore`（原為 `Fail`）。
+這表示當 webhook 暫時不可用時，API Server 不會拒絕 CR 的建立/更新，而是允許通過。
+若需要強制執行所有 validation，可在 Helm values 中設定：
+
+```yaml
+webhook:
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+```
+
+### Namespace-scoped Webhook watching（新增，2026-06-30）
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+Helm chart 現在支援 namespace-scoped webhook watching，可限制 webhook 只處理特定 namespace 的請求：
+
+```yaml
+webhook:
+  namespaces:
+    - slurm
+    - another-namespace
+```
 
 ### kind 叢集 kernel 參數
 
