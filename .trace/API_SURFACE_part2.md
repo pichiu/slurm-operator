@@ -235,6 +235,7 @@ kubectl get pods -n slurm -L \
 
 ### NodeSet 欄位預設值
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 | 欄位 | 預設值 |
 |------|--------|
 | `spec.replicas` | `1` |
@@ -242,9 +243,11 @@ kubectl get pods -n slurm -L \
 | `spec.workloadDisruptionProtection` | `true` |
 | `spec.updateStrategy.type` | `RollingUpdate` |
 | `spec.updateStrategy.rollingUpdate.maxUnavailable` | `"25%"` |
+| `spec.updateStrategy.scheduledUpdate.duration` | `"30m"` |
 | `spec.persistentVolumeClaimRetentionPolicy.whenDeleted` | `Retain` |
 | `spec.persistentVolumeClaimRetentionPolicy.whenScaled` | `Retain` |
 | `spec.pruneSlurmNodeRecords` | `Never` |
+| `spec.oversubscribeNode` | `false` |
 
 ### Token 欄位預設值
 
@@ -261,9 +264,28 @@ kubectl get pods -n slurm -L \
 
 ---
 
-## 10. 已棄用欄位
+## 10. 已棄用或已移除欄位
 
-| 欄位 | 所在 CRD | 棄用說明 | 取代方式 |
-|------|---------|---------|---------|
-| `spec.jwtHs256KeyRef` | Controller, Accounting, Token | 使用 HS256 演算法的舊版欄位 | 改用 `spec.jwtKeyRef` |
-| `spec.taintKubeNodes` | NodeSet | 計畫在未來版本移除；webhook 會發出 Warning | 改用其他節點隔離機制 |
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+| 欄位 | 所在 CRD | 狀態 | 說明 | 取代方式 |
+|------|---------|------|------|---------|
+| `spec.jwtHs256KeyRef` | Controller, Accounting, Token | 已棄用 | 使用 HS256 演算法的舊版欄位；型別已改為 `corev1.SecretKeySelector`（移除 namespace 欄位） | 改用 `spec.jwtKeyRef` |
+| `spec.taintKubeNodes` | NodeSet | **[已移除 cfb5029]** | 已從 CRD spec 完全移除（原本為 deprecated，webhook 發出 Warning） | 改用其他節點隔離機制 |
+
+### 型別變更說明（d5c49df..cfb5029）
+
+| 欄位 | 舊型別 | 新型別 | 影響 |
+|------|--------|--------|------|
+| `NodeSet.spec.controllerRef` | 自訂 `ObjectReference`（含 namespace） | `corev1.LocalObjectReference`（僅含 name） | **禁止跨 namespace 引用**；現有 YAML 需移除 namespace 欄位 |
+| `LoginSet.spec.controllerRef` | 自訂 `ObjectReference`（含 namespace） | `corev1.LocalObjectReference` | 同上 |
+| `RestApi.spec.controllerRef` | 自訂 `ObjectReference`（含 namespace） | `corev1.LocalObjectReference` | 同上 |
+| `Token.spec.jwtKeyRef` | 自訂 `JwtSecretKeySelector`（含 namespace） | `corev1.SecretKeySelector` | **僅限同 namespace Secret**；現有 YAML 需移除 namespace 欄位 |
+| `Token.spec.jwtHs256KeyRef` | 自訂 `JwtSecretKeySelector`（含 namespace） | `corev1.SecretKeySelector` | 同上 |
+
+### 安全性修正（d5c49df..cfb5029）
+
+| 修正 | 影響範圍 | 說明 |
+|------|---------|------|
+| `fix: prevent slurm.conf injection via nodeset partition config` | `NodeSet.spec.partition.config` | 加入 kubebuilder pattern validation `^[^\n]+$`，拒絕含換行字元的 config 值 |
+| `fix(login): raise RSA SSH host key default to 4096 bits` | LoginSet SSH host key | RSA SSH host key 預設長度從較低值提升至 4096 bits |
+| `fix: disallow cross namespace Slinky CR references` | 所有 CR 的 `controllerRef` / `jwtKeyRef` | 跨 namespace 引用一律被 webhook 拒絕 |

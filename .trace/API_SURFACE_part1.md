@@ -125,6 +125,7 @@ spec:
 
 固定副本數，每個 pod 有穩定的身份（適合 GPU 節點等需要固定名稱的情境）。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ```yaml
 apiVersion: slinky.slurm.net/v1beta1
 kind: NodeSet
@@ -132,9 +133,9 @@ metadata:
   name: slurm-workers
   namespace: slurm
 spec:
+  # controllerRef 型別改為 corev1.LocalObjectReference（禁止跨 namespace，無 namespace 欄位）
   controllerRef:
     name: slurm-controller
-    namespace: slurm
 
   scalingMode: StatefulSet   # 預設值
   replicas: 4
@@ -153,12 +154,21 @@ spec:
 
   partition:
     enabled: true
+    # config 欄位加入 pattern validation ^[^\n]+$，防止換行注入 slurm.conf
     config: "MaxTime=INFINITE State=UP"
 
   updateStrategy:
-    type: RollingUpdate
+    type: RollingUpdate        # 可選值：RollingUpdate | OnDelete | ScheduledUpdate（新增）
     rollingUpdate:
       maxUnavailable: "25%"   # 預設值，可設為整數或百分比字串
+
+  # ScheduledUpdate 範例（type=ScheduledUpdate 時，startTime 和 duration 為必填）
+  # updateStrategy:
+  #   type: ScheduledUpdate
+  #   scheduledUpdate:
+  #     startTime: "2026-07-01T02:00:00Z"   # RFC3339 時間戳
+  #     duration: "30m"                       # 預設 "30m"
+  #     flags: []                             # 附加 Slurm reservation flags（optional）
 
   persistentVolumeClaimRetentionPolicy:
     whenDeleted: Retain   # Retain | Delete
@@ -168,6 +178,10 @@ spec:
   pruneSlurmNodeRecords: Never      # Never | NodeNotFound
   workloadDisruptionProtection: true
   ordinalPadding: 3                  # pod 序號補零，如 worker-003
+
+  # oversubscribeNode：新增欄位，允許多個 pod 排程到同一 K8s Node（預設 false）
+  # 警告：不建議在生產環境啟用
+  oversubscribeNode: false
 
   template:
     spec:
@@ -183,6 +197,7 @@ spec:
 
 每個符合條件的 Kubernetes node 自動排程一個 pod，`replicas` 欄位忽略。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ```yaml
 apiVersion: slinky.slurm.net/v1beta1
 kind: NodeSet
@@ -190,9 +205,9 @@ metadata:
   name: slurm-workers-daemon
   namespace: slurm
 spec:
+  # controllerRef 型別改為 corev1.LocalObjectReference（無 namespace 欄位）
   controllerRef:
     name: slurm-controller
-    namespace: slurm
 
   scalingMode: DaemonSet   # replicas 欄位忽略
 
@@ -221,6 +236,7 @@ spec:
 
 管理 Slurm 登入節點（sackd），提供使用者 SSH 入口。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ```yaml
 apiVersion: slinky.slurm.net/v1beta1
 kind: LoginSet
@@ -228,9 +244,9 @@ metadata:
   name: slurm-login
   namespace: slurm
 spec:
+  # controllerRef 禁止跨 namespace 引用（fix: disallow cross namespace Slinky CR references）
   controllerRef:
-    name: slurm-controller
-    namespace: slurm            # 部署後不可更改
+    name: slurm-controller      # 部署後不可更改；namespace 欄位已移除
 
   replicas: 2
 
@@ -304,6 +320,7 @@ spec:
 
 管理 slurmrestd pod，提供 Slurm REST API 端點（`v0044`，對應 Slurm 25.11+）。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ```yaml
 apiVersion: slinky.slurm.net/v1beta1
 kind: RestApi
@@ -311,9 +328,9 @@ metadata:
   name: slurm-restapi
   namespace: slurm
 spec:
+  # controllerRef 禁止跨 namespace 引用
   controllerRef:
     name: slurm-controller
-    namespace: slurm
 
   replicas: 2
 
@@ -335,6 +352,7 @@ spec:
 
 自動簽發並輪換 Slurm JWT Token，儲存到 Kubernetes Secret。SlurmClient controller 預設每 12 分鐘輪換一次（lifetime 15 分鐘的 4/5）。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ```yaml
 apiVersion: slinky.slurm.net/v1beta1
 kind: Token
@@ -342,10 +360,11 @@ metadata:
   name: slurm-api-token
   namespace: slurm
 spec:
+  # jwtKeyRef 型別改為 corev1.SecretKeySelector（移除 namespace 欄位，僅限同 namespace Secret）
   jwtKeyRef:                     # 部署後不可更換
     name: slurm-jwt-key
     key: jwt.key
-    namespace: slurm             # 支援跨 namespace 引用
+    # namespace 欄位已移除（fix: disallow cross namespace Slinky CR references）
 
   username: "slurm"
 
@@ -362,15 +381,19 @@ spec:
 
 ## 4. Webhook 一覽表
 
-| Webhook | 型別 | 路徑 | failurePolicy | 觸發條件 |
-|---------|------|------|---------------|---------|
-| `ControllerWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-controller` | fail | create / update |
-| `AccountingWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-accounting` | fail | create / update |
-| `NodeSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-nodeset` | fail | create / update |
-| `LoginSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-loginset` | fail | create / update |
-| `RestapiWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-restapi` | fail | create / update |
-| `TokenWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-token` | fail | create / update |
-| `PodBindingWebhook` | Mutator | `/mutate--v1-binding` | fail | Pod binding（排程時） |
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+> **注意**：`failurePolicy` 預設值已改為 `Ignore`（`fix(helm): parametrize webhook failurePolicy/matchPolicy and default to Ignore`）。下表顯示 Helm chart 預設值；可透過 Helm values 覆寫。
+> Webhook 現支援 namespace-scoped watching（`feat(helm): add namespaced-scope watching for webhook`）。
+
+| Webhook | 型別 | 路徑 | failurePolicy（預設） | 觸發條件 |
+|---------|------|------|----------------------|---------|
+| `ControllerWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-controller` | Ignore | create / update |
+| `AccountingWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-accounting` | Ignore | create / update |
+| `NodeSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-nodeset` | Ignore | create / update |
+| `LoginSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-loginset` | Ignore | create / update |
+| `RestapiWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-restapi` | Ignore | create / update |
+| `TokenWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-token` | Ignore | create / update |
+| `PodBindingWebhook` | Mutator | `/mutate--v1-binding` | Ignore | Pod binding（排程時） |
 
 ### 4.1 ControllerWebhook 驗證規則
 
@@ -401,11 +424,16 @@ spec:
 
 ### 4.3 NodeSetWebhook 驗證規則
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 **Create / Update 時**：
 - `spec.controllerRef.name` 不可為空
 - `updateStrategy.rollingUpdate.maxUnavailable`：整數必須 > 0；百分比不可為 `"0%"`
+- `updateStrategy.scheduledUpdate.duration`：若設定，必須 >= 1 分鐘
 - `ssh.enabled=true` 時，`ssh.sssdConfRef.name` 不可為空
-- `taintKubeNodes=true` 產生 Deprecation Warning（允許通過）
+- ~~`taintKubeNodes=true` 產生 Deprecation Warning~~（`spec.taintKubeNodes` 欄位已移除，見 [已移除 cfb5029]）
+
+**CRD Schema XValidation**（`NodeSetUpdateStrategy`）：
+- `type=ScheduledUpdate` 時，`scheduledUpdate.startTime` 與 `scheduledUpdate.duration` 為必填
 
 **Update 時（額外不可變欄位）**：
 - `spec.controllerRef` 不可更改
