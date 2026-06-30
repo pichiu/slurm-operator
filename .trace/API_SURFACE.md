@@ -9,6 +9,7 @@
 
 ---
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ## 快速摘要
 
 **API Group**: `slinky.slurm.net` / **Version**: `v1beta1`
