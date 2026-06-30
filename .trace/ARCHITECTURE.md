@@ -1,7 +1,8 @@
 # slurm-operator 系統架構文件
 
 > **版本**：1.2.0-rc1 | **語言**：Go 1.26.3 | **框架**：controller-runtime 0.23.3
-> **API Group**：`slinky.slurm.net/v1beta1` | **最低 Kubernetes**：v1.29 | **最低 Slurm**：25.11
+> **API Group**：`slinky.slurm.net/v1beta1` | **最低 Kubernetes**：v1.29 | **最低 Slurm**：26.05
+> <!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->（Slurm 最低版本由 25.11 更新為 26.05，參見 `docs: fix required Slurm version`）
 
 ---
 
@@ -54,6 +55,7 @@ graph LR
     WH -->|Validate / Mutate| KAPI
     CM -->|Slurm REST API<br/>JWT auth| SREST
     SREST -->|轉發| SCTLD
+    CM -. watch RestAPI CR .-> RA
     SCTLD -->|Configless<br/>config push| SLURMD
     ACC -->|儲存帳務| MARIA
     CTRL -. external=true .-> ESCTLD
@@ -63,8 +65,11 @@ graph LR
 
 | Deployment | 進入點 | 監聽 Port | 主要職責 |
 |-----------|--------|-----------|---------|
-| `slurm-operator` | `cmd/manager/main.go` | `:8080`（metrics）`:8081`（health） | CRD Reconcile loop |
+| `slurm-operator` | `cmd/manager/main.go` | `:8080`（metrics）`:8081`（health）`:6060`（pprof，預設 localhost-only） | CRD Reconcile loop |
 | `slurm-operator-webhook` | `cmd/webhook/main.go` | `:9443`（webhook）`:8081`（health） | Admission validation + topology mutation |
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+> **pprof 端點**：`feat: enable live Go profiling of Slurm-operator using pprof` + `feat: enable flame graphs for key functions`。operator 新增 `--profile-addr`（預設 `localhost:6060`）啟用 Go pprof HTTP 端點，並對關鍵函式加上 flame graph 支援。此端點**不應對外公開**，僅供叢集內部診斷使用。
 
 **安裝順序**：`cert-manager → slurm-operator-crds → slurm-operator → slurm（cluster）`
 
@@ -82,7 +87,7 @@ graph LR
 | **Accounting Ctrl** | 管理 slurmdbd StatefulSet | `internal/controller/accounting/` | Accounting CR | slurmdbd Pod, MariaDB |
 | **RestApi Ctrl** | 管理 slurmrestd Deployment | `internal/controller/restapi/` | RestApi CR | slurmrestd Pods |
 | **Token Ctrl** | 產生並輪換 Slurm JWT，寫入 Secret | `internal/controller/token/` | Token CR, JwtKeyRef Secret | Kubernetes Secret |
-| **SlurmClient Ctrl** | 維護 Slurm REST API client（每個 Controller 一個） | `internal/controller/slurmclient/` | Controller CR, RestApi CR | `ClientMap` |
+| **SlurmClient Ctrl** | 維護 Slurm REST API client（每個 Controller 一個）<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->；監聽 RestApi CR 變更事件；RestApi 不存在時自動刪除 SlurmClient | `internal/controller/slurmclient/`、`eventhandler/eventhandler_restapi.go`、`utils/sort.go` | Controller CR, RestApi CR | `ClientMap` |
 | **ClientMap** | Thread-safe map 儲存各 Controller 的 Slurm client | `internal/clientmap/clientmap.go` | SlurmClient Ctrl | NodeSet Ctrl |
 | **SyncSteps** | 泛型 pipeline，依序執行各 sync 步驟 | `internal/syncsteps/syncsteps.go` | — | 所有 Controller |
 | **Builder 系統** | 從 CR Spec 產生 Kubernetes 物件規格 | `internal/builder/` | CRD Spec | API Server |
@@ -130,9 +135,27 @@ NodeSet 是 operator 中**最複雜的 CRD**，負責同時調和 Kubernetes Pod
 
 **DaemonSet 模式的內部實作**：直接引用 `k8s.io/kubernetes/pkg/controller/daemon/util` 的 `NodeShouldRunDaemonPod()` 邏輯，這是 slurm-operator 直接依賴 Kubernetes 內部套件的主要原因。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+**DaemonSet scalingMode 行為改善**：`feat(nodeset): handle DaemonSet scale in and out at once`——DaemonSet 模式現在可在單次 reconcile 中同時處理 scale in（刪除多餘 Pod）與 scale out（新增不足 Pod），而非分批進行。
+
+**健康但未註冊 Pod 的自動重啟**：`feat(nodeset): restart healthy but unregistered NodeSet pods`——若 Pod 狀態健康（Running）但尚未向 Slurm 成功註冊為計算節點，operator 會自動重啟該 Pod，避免「殭屍 Pod」佔用 Kube node 資源卻對 Slurm 工作負載毫無貢獻。
+
 **PinToNode**（StatefulSet 模式）：`spec.pinToNode=true` 時，operator 在 `status.ordinalToNode` 記錄 Pod ordinal 與 Kube node 的對應，並在後續 reconcile 注入 `nodeAffinity`，確保 Pod 固定在同一 Kube node 重啟，防止 Slurm 節點名稱漂移。
 
 **WorkloadDisruptionProtection**：預設 `true`，operator 建立動態 PodDisruptionBudget，`maxUnavailable` 等於當前執行 Slurm job 的 Pod 數，隨 job 完成動態調整，防止 Kubernetes 在 job 執行中強制驅逐 Pod。
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+**UpdateStrategy**（`api/v1beta1/nodeset_types.go`）：
+
+| 類型 | 行為 |
+|------|------|
+| `RollingUpdate`（預設） | 滾動更新 |
+| `OnDelete` | 手動刪除 Pod 後才更新 |
+| `ScheduledUpdate` | 透過 Slurm MAINT reservation，在指定時間窗口（`startTime` + `duration`，預設 30 分鐘）內排程更新 Pods |
+
+`ScheduledUpdate` 限制：`startTime` 與 `duration` 必填（由 `+kubebuilder:validation:XValidation` CEL 規則強制）。需在 `NodeSetPartition` 設定對應的 Slurm reservation。
+
+**Pod Drain reason 處理改善**：`feat: update doPodScale drain reason` + `fix: preserve previous reason if already drained`——若 Pod 已被 drain，operator 會保留既有的 drain reason，不覆蓋；Pod 管理邏輯重構為 `makePodCordonAndDrain` / `makePodUncordonAndUndrain` helper functions，讓 drain reason 更新路徑更清晰。
 
 **關鍵 Sync 步驟**（共 11 步，`nodeset_sync.go`）：
 ```
@@ -185,6 +208,9 @@ RestApi CR 管理 slurmrestd 的 Deployment。slurmrestd 是 operator 透過 Slu
 
 SlurmClient controller 自動發現 RestApi Service FQDN，作為 Slurm REST API endpoint。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+> **跨 namespace 參照限制**：`fix: disallow cross namespace Slinky CR references`——Webhook 現在禁止 RestApi 的 `controllerRef` 指向不同 namespace 的 Controller CR，所有 Slinky CR 之間的參照必須在同一 namespace 內（見第 4.4 節）。
+
 ---
 
 ### 3.6 Token（JWT 管理）
@@ -201,6 +227,9 @@ Token CR 是面向**終端使用者**的 CRD，允許將 Slurm JWT 輸出到 Kub
 - `secretRef`：輸出 Token 的 Secret 名稱
 
 **與 SlurmClient Ctrl 的差異**：Token CR 產生的 JWT 給外部使用者；SlurmClient Ctrl 產生的 JWT 是 operator 自己呼叫 slurmrestd 用的（lifetime 15 分鐘，每 12 分鐘自動輪換）。
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+> **跨 namespace 參照限制**：`fix: do not allow Token CR to reference secrets in other namespaces`——Token CR 的 `jwtKeyRef` 所指向的 Secret 必須與 Token CR 在同一 namespace，Webhook validation 強制執行。
 
 ---
 
@@ -230,7 +259,18 @@ NodeSet controller 監聽多種資源變化，轉換為 reconcile 請求：
 | `Controller` CR | `eventhandler/eventhandler_controller.go` | Controller 變化 → 通知相關 NodeSet |
 | `Secret` | `eventhandler/eventhandler_secret.go` | auth key / JWT key 變化 → 觸發 reconcile |
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+SlurmClient controller 新增 RestApi CR 事件監聽：
+
+| 資源 | Handler 位置 | 觸發行為 |
+|------|------------|---------|
+| `RestApi` CR | `internal/controller/slurmclient/eventhandler/eventhandler_restapi.go` | RestApi 建立/更新/刪除 → enqueue 對應 SlurmClient reconcile；若 RestApi 不存在則刪除 SlurmClient |
+
+**Deterministic RestApi 選取**：`internal/controller/slurmclient/utils/sort.go` 提供 `RestapisByCreationTimestamp` 排序，先依 `CreationTimestamp` 排序，時間相同則依 Name 字典序排序，確保每次 reconcile 選取的 RestApi 結果一致（不受 list 回傳順序影響）。
+
 ### 4.3 週期性調和（RequeueAfter）
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+> **效能改進**：`perf: constrain list to namespace`——所有 controller 的 List 操作現在限縮至 CR 所在 namespace，避免跨 namespace 的全域掃描，降低 Kubernetes API Server 負載與 informer 快取壓力。
 
 透過 `internal/utils/durationstore/durationstore.go` 的 `DurationStore` 機制：
 
@@ -239,6 +279,21 @@ NodeSet controller 監聽多種資源變化，轉換為 reconcile 請求：
 | NodeSet | 30 秒 | 固定週期確保狀態一致 |
 | SlurmClient | 12 分鐘 | JWT 快過期前（15 分鐘 × 4/5）重新產生 |
 | Token（refresh=true） | 根據 lifetime 計算 | 自動輪換前觸發 |
+
+### 4.4 跨 Namespace 參照限制（安全性）<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+
+`fix: disallow cross namespace Slinky CR references` 與 `fix: do not allow Token CR to reference secrets in other namespaces`：
+
+Webhook validation 現在禁止所有 Slinky CRD 的跨 namespace 參照，包括：
+
+| CRD | 受限欄位 | 說明 |
+|-----|---------|------|
+| NodeSet | `controllerRef` | 必須指向同一 namespace 的 Controller CR |
+| LoginSet | `controllerRef` | 必須指向同一 namespace 的 Controller CR |
+| RestApi | `controllerRef` | 必須指向同一 namespace 的 Controller CR |
+| Token | `jwtKeyRef` | 必須指向同一 namespace 的 Secret |
+
+**理由**：防止惡意使用者透過 CR 跨 namespace 竊取其他 namespace 的 JWT key 或 auth key。
 
 ---
 
@@ -415,9 +470,14 @@ graph TD
 | NodeSet Status 同步 | `internal/controller/nodeset/nodeset_sync_status.go` |
 | Slurm 操作抽象 | `internal/controller/nodeset/slurmcontrol/slurmcontrol.go` |
 | SlurmClient 維護 | `internal/controller/slurmclient/slurmclient_sync.go` |
+| SlurmClient RestApi 事件監聽 | `internal/controller/slurmclient/eventhandler/eventhandler_restapi.go` |<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+| SlurmClient RestApi 排序（deterministic） | `internal/controller/slurmclient/utils/sort.go` |<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 | Thread-safe Client Map | `internal/clientmap/clientmap.go` |
 | 通用 Sync Pipeline | `internal/syncsteps/syncsteps.go` |
 | JWT Token 產生 | `internal/controller/token/slurmjwt/token.go` |
 | Topology Mutation Webhook | `internal/webhook/pod_binding_webhook.go` |
 | Slurm 狀態 → Pod Conditions | `pkg/conditions/conditions.go` |
 | DurationStore（RequeueAfter） | `internal/utils/durationstore/durationstore.go` |
+| NodeSet UpdateStrategy 型別（含 ScheduledUpdate） | `api/v1beta1/nodeset_types.go` |<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+| Webhook 跨 namespace 參照驗證 | `internal/webhook/*_webhook.go` |<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+| pprof HTTP 端點 | `cmd/manager/main.go` |<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
