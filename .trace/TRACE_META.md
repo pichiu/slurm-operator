@@ -28,6 +28,10 @@
 
 ## 中繼 Context 檔案（`_context/`）
 
+> **注意**：這些是 trace pipeline 的 staging artifacts，用於生成主文件的中間產物。
+> 內容**未經逐一驗證**，可能含有錯誤（已知案例：`core_logic.md` 的 `sl_ung` 欄位不存在）。
+> 保留目的是讓下次增量更新有足夠的 context，**請勿將其視為 ground truth**，主文件才是驗證過的資訊來源。
+
 | 檔案 | 用途 |
 |------|------|
 | `_context/recon.md` | Stage 1 偵察結果：技術棧、目錄結構、既有文件摘要 |

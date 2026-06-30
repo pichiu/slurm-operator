@@ -1,7 +1,7 @@
 # API_SURFACE Part 1 — CRD 型別定義與 Webhook 規則
 
 > **API Group**: `slinky.slurm.net` / **Version**: `v1beta1`
-> **專案版本**: 1.2.0-rc1 | **最低 Kubernetes**: v1.29 | **最低 Slurm**: 25.11
+> **專案版本**: 1.2.0-rc1 | **最低 Kubernetes**: v1.29 | **最低 Slurm**: 26.05
 > 繼續閱讀：[API_SURFACE_part2.md](./API_SURFACE_part2.md)（Status 欄位、HPA、kubectl、Annotation）
 
 ---
@@ -318,7 +318,7 @@ spec:
 
 ### 3.6 RestApi CR
 
-管理 slurmrestd pod，提供 Slurm REST API 端點（`v0044`，對應 Slurm 25.11+）。
+管理 slurmrestd pod，提供 Slurm REST API 端點（`v0044`，對應 Slurm 26.05+）。
 
 <!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ```yaml
