@@ -282,3 +282,44 @@ quadrantChart
 | k8s internal 依賴引用 | `internal/controller/nodeset/nodeset_sync.go`（DaemonSet 邏輯） |
 | E2E 測試 | `test/e2e/` |
 | 版本歷史 | `CHANGELOG/CHANGELOG-1.1.md`, `CHANGELOG/CHANGELOG-1.0.md` |
+
+---
+
+## 增量更新紀錄 — 2026-06-30（commit d5c49df..cfb5029）
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+
+### 本次更新涵蓋範圍
+- Base Branch：`main`（原 trace 所用 `claude/generate-project-docs-LmQlv` 已合入 main）
+- 變更幅度：~41%（200/488 檔案，85 non-merge commits）
+- 更新的 .trace/ 文件：CODEBASE_MAP, INDEX, DATA_MODEL, API_SURFACE, ARCHITECTURE, DEV_GUIDE
+
+### 重要發現
+
+#### 安全性變更（需注意）
+1. **跨 namespace 參照禁止**：NodeSet.controllerRef、Token.jwtKeyRef 等欄位現在被 Webhook 強制限制在同一 namespace。既有跨 namespace 設定的叢集升級時**可能需要調整** CRD 設定。
+2. **slurm.conf injection 防護**：`NodeSetPartition.Config` 新增 `^[^\n]+$` pattern validation，含換行符號的舊設定將被 webhook 拒絕。
+
+#### API 破壞性變更
+- `ObjectReference` 和 `JwtSecretKeySelector` 自訂型別已從 API 中移除，改用 Kubernetes 原生型別（`corev1.LocalObjectReference`、`corev1.SecretKeySelector`）。跨版本升級需確認 YAML。
+- `TaintKubeNodes` 欄位已完全移除（原為 Deprecated），需清除既有 YAML 中的此欄位。
+
+#### 新功能摘要
+- **ScheduledUpdate 策略**：NodeSet 新增第三種更新策略，透過 Slurm MAINT reservation 在指定時間窗口（StartTime + Duration）內更新 pods。適合維護窗口場景。
+- **OversubscribeNode**：允許多個 NodeSet pod 共用同一 K8s Node（移除 anti-affinity）。**不建議生產環境使用**。
+- **pprof 端點**：Operator 內建 pprof HTTP 端點（localhost:6060），搭配 `hack/profile.sh` 使用。
+- **Google A3 Mega vendor 支援**：`helm/slurm/_vendor/google/a3mega/` 提供 A3 Mega GPU 節點的預設設定範例。
+
+#### 架構調整
+- SlurmClient Controller 現在 watch RestAPI CR 事件（透過新增的 `eventhandler_restapi.go`），RestAPI 被刪除時 SlurmClient 也會跟著刪除。
+- SlurmClient 選取 RestAPI 的邏輯改為 deterministic（依 CreationTimestamp + Name 排序），修正了隨機選取的 bug。
+- DaemonSet scalingMode 現在可以同時進行 scale in + out（原本只能一個方向）。
+
+#### Helm 重要變更
+- Webhook `failurePolicy` 預設從 `Fail` 改為 `Ignore`。生產環境若需強制 validation，需明確設定。
+- PDB 新增支援 Operator、Webhook、RestApi，與 HA 設定連動。
+- 預設映像版本：`26.05-ubuntu26.04`。
+
+### ⚠️ 待人工確認
+- ScheduledUpdate 策略的 Slurm reservation 互動細節（`internal/controller/nodeset/nodeset_sync.go` 中的實作）⚠️ 未驗證完整流程
+- 跨版本升級路徑：從 v1.1.x 升至含上述 API 變更的版本，CRD conversion webhook 行為 ⚠️ 未驗證
