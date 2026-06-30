@@ -190,15 +190,19 @@ bash hack/fix-vulns.sh      # 自動修復 govulncheck 發現的漏洞（新增 
 <!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 
 **PodDisruptionBudget（PDB）**
-Operator、Webhook、RestApi 現在都支援 PDB，且與 HA 設定連動：
+Operator、Webhook、RestApi 現在都支援 PDB，直接透過 `pdb.enabled` 控制（與 HA 無連動）：
 
 ```yaml
 # slurm-operator chart
 operator:
-  highAvailability:
-    enabled: true   # PDB 自動啟用
-    pdb:
-      maxUnavailable: 1
+  pdb:
+    enabled: true
+    maxUnavailable: 1   # 或 minAvailable: 1（二擇一）
+
+webhook:
+  pdb:
+    enabled: true
+    maxUnavailable: 1
 
 # slurm chart
 restapi:
@@ -223,16 +227,17 @@ operator:
 operator:
   nodeSelector:
     kubernetes.io/os: linux
-  securityContext:         # Pod 層級
+  podSecurityContext:      # Pod 層級
     runAsNonRoot: true
-  containerSecurityContext:  # Container 層級
+  securityContext:         # Container 層級
     allowPrivilegeEscalation: false
 ```
 
-**NodeSet/LoginSet 預設值抽象化**
-新增 `nodesetDefaults` 和 `loginsetDefaults` 物件，可全域設定預設值：
+**NodeSet/LoginSet 預設值抽象化（slurm chart）**
+`helm/slurm` chart 新增 `nodesetDefaults` 和 `loginsetDefaults` 頂層物件，可全域設定預設值：
 
 ```yaml
+# helm/slurm values.yaml（slurm chart，非 slurm-operator chart）
 nodesetDefaults:
   replicas: 1
   image:
@@ -416,26 +421,29 @@ go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
 ### Webhook Failure Policy（更新，2026-06-30）
 
 <!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
-Webhook 的 `failurePolicy` 預設已改為 `Ignore`（原為 `Fail`）。
-這表示當 webhook 暫時不可用時，API Server 不會拒絕 CR 的建立/更新，而是允許通過。
-若需要強制執行所有 validation，可在 Helm values 中設定：
+**Mutating** webhook 的 `failurePolicy` 預設已改為 `Ignore`（原為 `Fail`）。
+**Validating** webhook 的 `failurePolicy` 預設仍為 `Fail`。
+
+若需要覆寫，兩者各自獨立設定：
 
 ```yaml
 webhook:
-  failurePolicy: Fail
-  matchPolicy: Equivalent
+  validating:
+    failurePolicy: Fail       # 預設值，驗證失敗時拒絕請求
+    matchPolicy: Equivalent
+  mutating:
+    failurePolicy: Ignore     # 預設值（2026-06-30 變更），webhook 不可用時允許通過
+    matchPolicy: Equivalent
 ```
 
 ### Namespace-scoped Webhook watching（新增，2026-06-30）
 
 <!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
-Helm chart 現在支援 namespace-scoped webhook watching，可限制 webhook 只處理特定 namespace 的請求：
+Helm chart 現在支援 namespace-scoped webhook watching，可限制 webhook 只處理特定 namespace 的請求。`namespaces` 為逗號分隔的字串（非 YAML list）：
 
 ```yaml
 webhook:
-  namespaces:
-    - slurm
-    - another-namespace
+  namespaces: "slurm,another-namespace"
 ```
 
 ### kind 叢集 kernel 參數

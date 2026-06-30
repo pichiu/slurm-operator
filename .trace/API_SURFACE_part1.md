@@ -382,17 +382,20 @@ spec:
 ## 4. Webhook 一覽表
 
 <!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
-> **注意**：`failurePolicy` 預設值已改為 `Ignore`（`fix(helm): parametrize webhook failurePolicy/matchPolicy and default to Ignore`）。下表顯示 Helm chart 預設值；可透過 Helm values 覆寫。
-> Webhook 現支援 namespace-scoped watching（`feat(helm): add namespaced-scope watching for webhook`）。
+> **注意**（已更正，2026-06-30 code review）：`failurePolicy` 因 webhook 型別不同而有不同預設值（`fix(helm): parametrize webhook failurePolicy/matchPolicy and default to Ignore`）。
+> - **Validating webhooks**（所有 CR 驗證）：`failurePolicy: Fail`（預設）
+> - **Mutating webhook**（PodBinding）：`failurePolicy: Ignore`（預設，此次更新所指）
+> 覆寫方式：`webhook.validating.failurePolicy` / `webhook.mutating.failurePolicy`（各自獨立）。
+> Webhook 現支援 namespace-scoped watching（`feat(helm): add namespaced-scope watching for webhook`），設定 key：`webhook.namespaces`（逗號分隔字串）。
 
 | Webhook | 型別 | 路徑 | failurePolicy（預設） | 觸發條件 |
 |---------|------|------|----------------------|---------|
-| `ControllerWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-controller` | Ignore | create / update |
-| `AccountingWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-accounting` | Ignore | create / update |
-| `NodeSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-nodeset` | Ignore | create / update |
-| `LoginSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-loginset` | Ignore | create / update |
-| `RestapiWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-restapi` | Ignore | create / update |
-| `TokenWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-token` | Ignore | create / update |
+| `ControllerWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-controller` | **Fail** | create / update |
+| `AccountingWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-accounting` | **Fail** | create / update |
+| `NodeSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-nodeset` | **Fail** | create / update |
+| `LoginSetWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-loginset` | **Fail** | create / update |
+| `RestapiWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-restapi` | **Fail** | create / update |
+| `TokenWebhook` | Validator | `/validate-slinky-slurm-net-v1beta1-token` | **Fail** | create / update |
 | `PodBindingWebhook` | Mutator | `/mutate--v1-binding` | Ignore | Pod binding（排程時） |
 
 ### 4.1 ControllerWebhook 驗證規則
