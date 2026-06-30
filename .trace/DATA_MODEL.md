@@ -6,6 +6,7 @@
 
 ## 1. CRD 關係圖
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 ```mermaid
 erDiagram
     Controller {
@@ -17,12 +18,13 @@ erDiagram
         bool inplaceReconfigure
     }
     NodeSet {
-        ObjectReference controllerRef
+        LocalObjectReference controllerRef
         int32 replicas
         string scalingMode
         NodeSetPartition partition
         bool pinToNode
         bool workloadDisruptionProtection
+        bool oversubscribeNode
     }
     LoginSet {
         ObjectReference controllerRef
@@ -41,7 +43,7 @@ erDiagram
         bool external
     }
     Token {
-        JwtSecretKeySelector jwtKeyRef
+        SecretKeySelector jwtKeyRef
         string username
         Duration lifetime
         bool refresh
@@ -103,11 +105,12 @@ erDiagram
 
 對應 Slurm 元件：`slurmd`（計算節點 daemon）。支援 StatefulSet 與 DaemonSet 兩種擴展模式。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 #### Spec 關鍵欄位
 
 | 欄位 | 型別 | 必填 | 預設值 | 用途 |
 |------|------|------|--------|------|
-| `controllerRef` | `ObjectReference` | **是** | — | 指向所屬的 Controller CR |
+| `controllerRef` | `corev1.LocalObjectReference` | **是** | — | 指向所屬的 Controller CR（**僅限同 namespace**，不允許跨 namespace 參照） |
 | `replicas` | `*int32` | 否 | `1` | 期望 Pod 數（StatefulSet 模式有效） |
 | `scalingMode` | `ScalingModeType` | 否 | `StatefulSet` | `StatefulSet`（固定數量）或 `DaemonSet`（每節點一個） |
 | `slurmd` | `ContainerWrapper` | 否 | — | slurmd 主容器設定 |
@@ -117,15 +120,18 @@ erDiagram
 | `extraConf` | `string` | 否 | — | 傳給 `slurmd --conf` 的額外節點參數 |
 | `partition` | `NodeSetPartition` | 否 | enabled=false | 是否為此 NodeSet 建立 Slurm Partition |
 | `volumeClaimTemplates` | `[]PVC` | 否 | — | Pod 使用的 PVC 模板清單 |
-| `updateStrategy` | `NodeSetUpdateStrategy` | 否 | RollingUpdate 25% | Pod 更新策略（RollingUpdate / OnDelete） |
+| `updateStrategy` | `NodeSetUpdateStrategy` | 否 | RollingUpdate 25% | Pod 更新策略（RollingUpdate / OnDelete / ScheduledUpdate） |
 | `revisionHistoryLimit` | `int32` | 否 | `0` | 保留的 ControllerRevision 歷史數量 |
 | `ordinalPadding` | `uint` | 否 | `0` | Pod ordinal 數字補零位數（StatefulSet 模式） |
 | `pinToNode` | `bool` | 否 | `false` | Pod 固定到首次排程的 Kube node（StatefulSet 模式） |
-| `taintKubeNodes` | `bool` | 否 | `false` | **已棄用** — 對運行此 NodeSet Pod 的 Kube node 套用 NoExecute taint |
+| ~~`taintKubeNodes`~~ | ~~`bool`~~ | — | — | **已移除（d5c49df..cfb5029）** — 原功能為對運行此 NodeSet Pod 的 Kube node 套用 NoExecute taint |
+| `oversubscribeNode` | `bool` | 否 | `false` | 允許多個 NodeSet Pod 共用同一 Kubernetes Node（移除 anti-affinity）；**不建議用於生產環境** |
 | `workloadDisruptionProtection` | `*bool` | 否 | `true` | 是否建立動態 PDB 保護執行中的 Slurm job |
 | `pruneSlurmNodeRecords` | `string` | 否 | `Never` | 清除無效 Slurm node 記錄策略（`Never` / `NodeNotFound`） |
 | `minReadySeconds` | `int32` | 否 | `0` | Pod 被視為可用的最短就緒秒數 |
 | `persistentVolumeClaimRetentionPolicy` | `NodeSetPVCRetentionPolicy` | 否 | Retain/Retain | NodeSet 刪除或縮容時 PVC 的保留策略 |
+
+> **安全性變更（d5c49df..cfb5029）**：`controllerRef` 型別從自訂 `ObjectReference`（含 namespace 欄位）改為 `corev1.LocalObjectReference`，**禁止跨 namespace 參照**。
 
 #### Status 欄位
 
@@ -233,16 +239,19 @@ erDiagram
 
 對應 Slurm 功能：`auth/jwt`。將 JWT 寫入 Kubernetes Secret，供其他元件或使用者使用。
 
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
 #### Spec 關鍵欄位
 
 | 欄位 | 型別 | 必填 | 預設值 | 用途 |
 |------|------|------|--------|------|
-| `jwtKeyRef` | `*JwtSecretKeySelector` | 條件必填 | — | JWT 簽章金鑰，需填此或 `jwtHs256KeyRef` |
-| `jwtHs256KeyRef` | `*JwtSecretKeySelector` | 條件必填 | — | **已棄用**，改用 `jwtKeyRef` |
+| `jwtKeyRef` | `*corev1.SecretKeySelector` | 條件必填 | — | JWT 簽章金鑰，需填此或 `jwtHs256KeyRef`（**僅限同 namespace**） |
+| `jwtHs256KeyRef` | `*corev1.SecretKeySelector` | 條件必填 | — | **已棄用**，改用 `jwtKeyRef`（**僅限同 namespace**） |
 | `username` | `string` | **是** | — | JWT `sun` claim 的 Slurm 使用者名稱 |
 | `lifetime` | `*metav1.Duration` | 否 | — | JWT 有效期（如 `24h`） |
 | `refresh` | `*bool` | 否 | `true` | `true` 時自動輪換 Token；`false` 時 Secret 為 immutable |
 | `secretRef` | `*SecretKeySelector` | 否 | — | 指定輸出 Secret 的名稱與 key |
+
+> **安全性變更（d5c49df..cfb5029）**：`jwtKeyRef` 與 `jwtHs256KeyRef` 型別從自訂 `JwtSecretKeySelector`（含 namespace 欄位）改為標準 `corev1.SecretKeySelector`，Token CR 現在只能參照**同 namespace** 的 Secret，不能跨 namespace 引用 JWT 金鑰。
 
 #### Status 欄位
 
@@ -257,14 +266,10 @@ erDiagram
 
 ### ObjectReference
 
-```go
-type ObjectReference struct {
-    Namespace string `json:"namespace,omitempty"`
-    Name      string `json:"name,omitempty"`
-}
-```
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+> **注意**：`ObjectReference` 自訂型別已從 `api/v1beta1/base_types.go` 移除。`NodeSet.controllerRef` 已改用 `corev1.LocalObjectReference`（不含 namespace 欄位）。`Controller.accountingRef`、`configFileRefs` 等欄位目前仍使用相容型別，請以實際 CRD schema 為準。⚠️ 未驗證
 
-跨 CR 引用的通用型別。`controllerRef`、`accountingRef`、`configFileRefs` 等欄位皆使用此型別。提供 `NamespacedName()` 與 `IsMatch()` 方法。
+~~`ObjectReference` 自訂 struct（含 Namespace、Name 欄位及 NamespacedName()、IsMatch() 方法）已於 d5c49df..cfb5029 移除。~~
 
 ---
 
@@ -293,16 +298,53 @@ type PodTemplate struct {
 
 ---
 
-### JwtSecretKeySelector
+### ~~JwtSecretKeySelector~~（已移除）
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+> **已於 d5c49df..cfb5029 移除。** Token CR 的 `jwtKeyRef` 與 `jwtHs256KeyRef` 欄位現在直接使用標準 `corev1.SecretKeySelector`，不再有 namespace 欄位，**不支援跨 namespace 引用**。
+
+~~`JwtSecretKeySelector` 是 `corev1.SecretKeySelector`（Secret name + key）加上 `namespace` 欄位的 wrapper，允許跨 namespace 引用 JWT 簽章金鑰。~~
+
+---
+
+### NodeSetPartition
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+`NodeSetPartition.Config` 新增 kubebuilder validation pattern `^[^\n]+$`，禁止換行符號，防止惡意 `slurm.conf` 內容注入（config injection 安全修正）。
+
+---
+
+### NodeSetUpdateStrategy
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+`NodeSetUpdateStrategy.Type` 列舉值新增第三個選項 `ScheduledUpdate`，共三個有效值：
+
+| Type | 說明 |
+|------|------|
+| `RollingUpdate` | 滾動更新（預設），每次替換比例由 `maxUnavailable` 控制 |
+| `OnDelete` | 僅在舊 Pod 被刪除時才更新 |
+| `ScheduledUpdate` | 透過 Slurm reservation（MAINT flag）在指定時間視窗內更新；需搭配 `scheduledUpdate` 子欄位 |
+
+`type=ScheduledUpdate` 時有 CEL 驗證：`scheduledUpdate.startTime` 與 `scheduledUpdate.duration` 均為必填。
 
 ```go
-type JwtSecretKeySelector struct {
-    corev1.SecretKeySelector `json:",inline"`
-    Namespace string `json:"namespace,omitempty"`
+// +kubebuilder:validation:XValidation:rule="self.type != 'ScheduledUpdate' || (has(self.scheduledUpdate.startTime) && has(self.scheduledUpdate.duration))"
+```
+
+---
+
+### ScheduledUpdateNodeSetStrategy
+
+<!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
+```go
+type ScheduledUpdateNodeSetStrategy struct {
+    StartTime metav1.Time     `json:"startTime,omitempty"`   // RFC3339 時間戳，開始更新時間
+    Duration  metav1.Duration `json:"duration,omitempty"`    // 更新持續時間，預設 "30m"
+    Flags     []string        `json:"flags,omitempty"`       // 附加 Slurm reservation flags
 }
 ```
 
-在標準 `SecretKeySelector`（Secret name + key）基礎上新增 `namespace` 欄位，允許跨 namespace 引用 JWT 簽章金鑰（Token CR 使用）。
+用於 `NodeSetUpdateStrategy.ScheduledUpdate` 子欄位。operator 會依照 `StartTime` 與 `Duration` 建立對應的 Slurm reservation，讓 Pod 在該時間視窗內透過 MAINT reservation flag 進行更新。`Flags` 可附加額外的 reservation flags（參考 `scontrol` 文件）。
 
 ---
 
