@@ -267,7 +267,7 @@ erDiagram
 ### ObjectReference
 
 <!-- 更新於 2026-06-30, commit range: d5c49df..cfb5029 -->
-> **注意**：`ObjectReference` 自訂型別已從 `api/v1beta1/base_types.go` 移除。`NodeSet.controllerRef` 已改用 `corev1.LocalObjectReference`（不含 namespace 欄位）。`Controller.accountingRef`、`configFileRefs` 等欄位目前仍使用相容型別，請以實際 CRD schema 為準。⚠️ 未驗證
+> **已驗證**（commit `511771c`）：`ObjectReference` 自訂型別已從 `api/v1beta1/base_types.go` 完整移除。`NodeSet.controllerRef`、`LoginSet.controllerRef`、`RestApi.controllerRef` 均已改為 `corev1.LocalObjectReference`（只有 `name`，無 `namespace`）。`Controller` 的 `accountingRef`、`configFileRefs`、`prologScriptRefs`、`epilogScriptRefs`、`prologSlurmctldScriptRefs`、`epilogSlurmctldScriptRefs` 也全部改為 `corev1.LocalObjectReference`。升級前若有跨 namespace 設定，請執行 pre-upgrade 檢查（見 DISCOVERY_LOG.md）。
 
 ~~`ObjectReference` 自訂 struct（含 Namespace、Name 欄位及 NamespacedName()、IsMatch() 方法）已於 d5c49df..cfb5029 移除。~~
 

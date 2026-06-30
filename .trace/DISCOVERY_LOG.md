@@ -320,6 +320,29 @@ quadrantChart
 - PDB 新增支援 Operator、Webhook、RestApi，與 HA 設定連動。
 - 預設映像版本：`26.05-ubuntu26.04`。
 
-### ⚠️ 待人工確認
-- ScheduledUpdate 策略的 Slurm reservation 互動細節（`internal/controller/nodeset/nodeset_sync.go` 中的實作）⚠️ 未驗證完整流程
-- 跨版本升級路徑：從 v1.1.x 升至含上述 API 變更的版本，CRD conversion webhook 行為 ⚠️ 未驗證
+### 已驗證項目（2026-06-30，code 直讀）
+
+#### ScheduledUpdate 策略的 Slurm reservation 互動（已驗證）
+<!-- source: internal/controller/nodeset/nodeset_sync.go:1511, slurmcontrol/slurmcontrol.go:820+ -->
+
+**完整流程**（code 確認）：
+
+1. **Reservation 命名**：固定為 `SlurmOperatorMaint-{nodeset.Name}`（`slurmcontrol.go`）
+2. **建立條件**：`type=ScheduledUpdate` + `replicas > 0` + `SlurmIdle+SlurmAllocated > 0`（等 pod 健康再建）
+3. **Finalizer**：建立前加 finalizer，確保刪除 NodeSet 時 reservation 也被清除
+4. **過期 startTime**：`startTime` 已過且不帶 `FORCE_START` flag → reservation **不建立**，靜默跳過（`slurmcontrol.go: case !slurmReservationExists && !created`）
+5. **Active 中的更新限制**：Slurm 不允許修改 active reservation 的大部分欄位，controller 對 active reservation 只會更新 node list（`updateReservationNodes()`）
+6. **重複發生的 reservation**：Slurm 完成後自動推進 StartTime 到下一次；controller 偵測到 old StartTime > new StartTime 且是 reoccurring reservation 時，**保留 Slurm 的新 StartTime**，避免觸發多餘 update 或 Slurm 拒絕過去時間的錯誤
+7. **Idempotency**：`apiequality.Semantic.DeepEqual(coreNewReservationInfo, coreOldReservationInfo)` 保護，flags 排序後比較，不會重複建立
+8. **Pod 更新觸發**：只有在 `GetPodsUnderReservation()` 回傳（即節點在 MAINT reservation 下）的 pod 才會被刪除並更新
+
+#### 跨版本升級路徑（已驗證）
+<!-- source: api/v1beta1/nodeset_convert.go, config/crd/bases/, commit 511771c -->
+
+**結論：只有單一 v1beta1，無 conversion webhook，但有 silent breaking change。**
+
+- `api/v1beta1/nodeset_convert.go` 的 `Hub()` 方法只是空函式，供 controller-runtime 識別 storage version，不做任何轉換
+- CRD 始終只有一個版本（v1beta1），API server 不需要 conversion webhook
+- **升級時的 etcd 資料行為**：舊 CR 中 `controllerRef.namespace`（舊型別 `ObjectReference` 的欄位）在新 schema（`corev1.LocalObjectReference`，只有 `name`）讀取時，Go JSON unmarshal 會**靜默丟棄**未知欄位
+- **⚠️ 潛在 Breaking Change**（有意為之）：若叢集中存在跨 namespace 設定的 NodeSet（`controllerRef.namespace != nodeset.namespace`），升級後 controller 改用 NodeSet 自身的 namespace 找 Controller CR，**可能找不到**導致 reconcile 失敗。commit `511771c` 明確說明這是安全修正（"Security is compromised if objects can consume objects in other namespaces"）
+- **建議**：升級前執行 `kubectl get nodesets -A -o json | jq '.items[] | select(.spec.controllerRef.namespace != null and .spec.controllerRef.namespace != .metadata.namespace)'` 確認是否有跨 namespace 設定
