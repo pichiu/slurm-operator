@@ -8,15 +8,22 @@
 # Build:
 #   docker build -f Dockerfile.apptainer --target slurmd-apptainer -t slurmd-apptainer .
 #   docker build -f Dockerfile.apptainer --target login-apptainer -t login-apptainer .
+#
+# To combine with pyxis+enroot, build on top of the pyxis images instead:
+#   docker build -f Dockerfile.apptainer --target slurmd-apptainer \
+#     --build-arg SLURMD_IMAGE=ghcr.io/slinkyproject/slurmd-pyxis:26.05-ubuntu26.04 \
+#     -t slurmd-pyxis-apptainer .
 
 ARG REGISTRY=ghcr.io/slinkyproject
 ARG SLURM_TAG=26.05-ubuntu26.04
+ARG SLURMD_IMAGE=${REGISTRY}/slurmd:${SLURM_TAG}
+ARG LOGIN_IMAGE=${REGISTRY}/login:${SLURM_TAG}
 
 # Ref: https://launchpad.net/~apptainer/+archive/ubuntu/ppa
 ARG APPTAINER_PPA_FINGERPRINT=F6B0F5193D4F3301EF491FF0AFE36534FC6218AE
 
 ################################################################################
-FROM ${REGISTRY}/slurmd:${SLURM_TAG} AS slurmd-apptainer
+FROM ${SLURMD_IMAGE} AS slurmd-apptainer
 
 SHELL ["bash", "-c"]
 
@@ -35,7 +42,7 @@ set -xeuo pipefail
 apt-get -qq update
 apt-get -qq -y install --no-install-recommends \
   ca-certificates gpg
-gpg --dearmor -o /usr/share/keyrings/apptainer-ppa.gpg /tmp/apptainer.gpgkey
+gpg --batch --yes --dearmor -o /usr/share/keyrings/apptainer-ppa.gpg /tmp/apptainer.gpgkey
 rm /tmp/apptainer.gpgkey
 . /etc/os-release
 echo "deb [signed-by=/usr/share/keyrings/apptainer-ppa.gpg] https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu ${VERSION_CODENAME} main" \
@@ -61,7 +68,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   --mount=type=cache,target=/var/lib/apt,sharing=locked <<EOR
 # Install Nvidia Container Toolkit
 set -xeuo pipefail
-gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ./libnvidia-container.gpgkey
+gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ./libnvidia-container.gpgkey
 sed -i 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' /etc/apt/sources.list.d/nvidia-container-toolkit.list
 apt-get -qq update
 apt-get -qq -y install --no-install-recommends \
@@ -70,7 +77,7 @@ rm *.gpgkey
 EOR
 
 ################################################################################
-FROM ${REGISTRY}/login:${SLURM_TAG} AS login-apptainer
+FROM ${LOGIN_IMAGE} AS login-apptainer
 
 SHELL ["bash", "-c"]
 
@@ -89,7 +96,7 @@ set -xeuo pipefail
 apt-get -qq update
 apt-get -qq -y install --no-install-recommends \
   ca-certificates gpg
-gpg --dearmor -o /usr/share/keyrings/apptainer-ppa.gpg /tmp/apptainer.gpgkey
+gpg --batch --yes --dearmor -o /usr/share/keyrings/apptainer-ppa.gpg /tmp/apptainer.gpgkey
 rm /tmp/apptainer.gpgkey
 . /etc/os-release
 echo "deb [signed-by=/usr/share/keyrings/apptainer-ppa.gpg] https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu ${VERSION_CODENAME} main" \
@@ -114,7 +121,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   --mount=type=cache,target=/var/lib/apt,sharing=locked <<EOR
 # Install Nvidia Container Toolkit
 set -xeuo pipefail
-gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ./libnvidia-container.gpgkey
+gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ./libnvidia-container.gpgkey
 sed -i 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' /etc/apt/sources.list.d/nvidia-container-toolkit.list
 apt-get -qq update
 apt-get -qq -y install --no-install-recommends \

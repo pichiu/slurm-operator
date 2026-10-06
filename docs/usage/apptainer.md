@@ -12,6 +12,7 @@
   - [Configure](#configure)
     - [Images](#images)
     - [Slurm OCI Runtime](#slurm-oci-runtime)
+    - [Combining with Pyxis](#combining-with-pyxis)
   - [Test](#test)
     - [Apptainer in Job Steps](#apptainer-in-job-steps)
     - [Slurm Container Jobs](#slurm-container-jobs)
@@ -136,6 +137,55 @@ are reachable inside the container.
 > substitute, as it evaluates the file as a shell script and fails on values
 > containing spaces.
 
+### Combining with Pyxis
+
+Apptainer does not need pyxis. Pyxis is a [SPANK] plugin that integrates enroot
+with `srun` (`--container-image`), while Apptainer is integrated through Slurm's
+native `--container` option and [oci.conf]. The two use separate options and do
+not conflict, so they can be installed side by side.
+
+To offer both runtimes on the same nodes, build the Apptainer images on top of
+the pyxis images.
+
+```bash
+cd hack/apptainer
+docker build -f Dockerfile.apptainer --target slurmd-apptainer \
+  --build-arg SLURMD_IMAGE=ghcr.io/slinkyproject/slurmd-pyxis:26.05-ubuntu26.04 \
+  -t <registry>/slurmd-pyxis-apptainer:26.05-ubuntu26.04 .
+docker build -f Dockerfile.apptainer --target login-apptainer \
+  --build-arg LOGIN_IMAGE=ghcr.io/slinkyproject/login-pyxis:26.05-ubuntu26.04 \
+  -t <registry>/login-pyxis-apptainer:26.05-ubuntu26.04 .
+```
+
+Then configure both `plugstack.conf` (see the [pyxis guide](pyxis.md)) and
+`oci.conf`.
+
+```yaml
+configFiles:
+  plugstack.conf: |
+    include /usr/share/pyxis/*
+  oci.conf: |
+    IgnoreFileConfigJson=true
+    CreateEnvFile=null
+    EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+    RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+    RunTimeRun="/usr/local/bin/apptainer-oci-run %r %e -- %@"
+    RunTimeKill="kill -s SIGTERM %p"
+    RunTimeDelete="kill -s SIGKILL %p"
+```
+
+Each job step picks its runtime, and a batch job may mix both across steps.
+
+```console
+$ srun --container-image=alpine:latest cat /etc/alpine-release            # pyxis + enroot
+$ srun --container=docker://alpine:latest /bin/cat /etc/alpine-release    # Apptainer
+```
+
+> [!WARNING]
+> Do not pass `--container-image` and `--container` to the same step. Pyxis
+> enters its container first, and the Slurm OCI runtime then fails with
+> `container_run: unable to write .../environment`.
+
 ## Test
 
 ### Apptainer in Job Steps
@@ -157,7 +207,14 @@ PRETTY_NAME="Alpine Linux v3.24"
 With [oci.conf](#slurm-oci-runtime) configured, request the container through
 Slurm.
 
+`--container` accepts anything `apptainer exec` does: a SIF image, a rootfs
+directory, or a registry URI such as `docker://`. Registry images are pulled and
+converted on first use, and cached in `APPTAINER_CACHEDIR` afterwards, similar
+to pyxis `--container-image`.
+
 ```console
+$ srun --partition=apptainer --container=docker://alpine:latest /bin/grep PRETTY /etc/os-release
+PRETTY_NAME="Alpine Linux v3.24"
 $ srun --partition=apptainer --ntasks=2 --container=$HOME/alpine.sif /bin/sh -c 'echo task $SLURM_PROCID of $SLURM_NTASKS'
 task 0 of 2
 task 1 of 2
@@ -193,8 +250,9 @@ APPTAINER_NV=1 srun --partition=apptainer --gpus=1 --container=$HOME/pytorch.sif
   the container starts, so a command found at `/usr/bin/grep` on the host is run
   as `/usr/bin/grep` in the container. Use paths valid inside the container
   (e.g. `/bin/sh`) when the image layout differs from the host.
-- The pyxis and Apptainer images can coexist in one cluster, but use partitions
-  and/or features to steer jobs to nodes with the runtime they need.
+- When some NodeSets run pyxis-only or Apptainer-only images, use partitions
+  and/or features to steer jobs to nodes with the runtime they need. See
+  [Combining with Pyxis](#combining-with-pyxis) to offer both on the same nodes.
 - Some hosts create `/dev/fuse` with mode `0600`. The image entrypoint changes
   it to `0666` inside the container only, so that job users can mount SIF
   images.
@@ -207,3 +265,4 @@ APPTAINER_NV=1 srun --partition=apptainer --gpus=1 --container=$HOME/pytorch.sif
 [oci.conf]: https://slurm.schedmd.com/oci.conf.html
 [pyxis]: https://github.com/NVIDIA/pyxis
 [slurm-containers]: https://slurm.schedmd.com/containers.html
+[spank]: https://slurm.schedmd.com/spank.html
