@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
+# SPDX-License-Identifier: Apache-2.0
+
+# Wrapper for the Slurm oci.conf RunTimeRun hook (runtime/oci) to run a job
+# step inside an Apptainer container with the step's environment.
+#
+# oci.conf:
+#   IgnoreFileConfigJson=true
+#   CreateEnvFile=null
+#   RunTimeRun="/usr/local/bin/apptainer-oci-run %r %e -- %@"
+#
+# Ref: https://slurm.schedmd.com/containers.html
+# Ref: https://slurm.schedmd.com/oci.conf.html
+
+set -euo pipefail
+
+if (($# < 4)) || [[ $3 != "--" ]]; then
+	echo "usage: $0 <image|rootfs> <envfile> -- <command> [args...]" >&2
+	exit 1
+fi
+
+IMAGE="$1"
+ENVFILE="$2"
+shift 3
+
+# The step environment, as written by slurmstepd (NUL terminated).
+mapfile -d '' STEP_ENV <"$ENVFILE"
+
+# Bind the slurmd spool dir so batch scripts are reachable in the container.
+# Users can tune Apptainer through the step environment, since it is passed to
+# apptainer itself (e.g. `APPTAINER_NV=1`, `APPTAINER_BIND=/data`).
+exec env -i "${STEP_ENV[@]}" \
+	/usr/bin/apptainer exec \
+	--userns \
+	--bind /var/spool/slurmd \
+	"$IMAGE" "$@"

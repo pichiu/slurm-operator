@@ -1,0 +1,123 @@
+# syntax=docker/dockerfile:1
+# SPDX-FileCopyrightText: Copyright (C) SchedMD LLC.
+# SPDX-License-Identifier: Apache-2.0
+
+# Apptainer (formerly Singularity) variants of the Slinky slurmd and login
+# images. Modeled after Dockerfile.pyxis in SlinkyProject/containers.
+#
+# Build:
+#   docker build -f Dockerfile.apptainer --target slurmd-apptainer -t slurmd-apptainer .
+#   docker build -f Dockerfile.apptainer --target login-apptainer -t login-apptainer .
+
+ARG REGISTRY=ghcr.io/slinkyproject
+ARG SLURM_TAG=26.05-ubuntu26.04
+
+# Ref: https://launchpad.net/~apptainer/+archive/ubuntu/ppa
+ARG APPTAINER_PPA_FINGERPRINT=F6B0F5193D4F3301EF491FF0AFE36534FC6218AE
+
+################################################################################
+FROM ${REGISTRY}/slurmd:${SLURM_TAG} AS slurmd-apptainer
+
+SHELL ["bash", "-c"]
+
+ARG APPTAINER_PPA_FINGERPRINT
+ARG DEBIAN_FRONTEND=noninteractive
+
+USER root
+
+ADD https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${APPTAINER_PPA_FINGERPRINT} /tmp/apptainer.gpgkey
+
+# Ref: https://apptainer.org/docs/admin/latest/installation.html#install-ubuntu-packages
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked <<EOR
+# Install Apptainer
+set -xeuo pipefail
+apt-get -qq update
+apt-get -qq -y install --no-install-recommends \
+  ca-certificates gpg
+gpg --dearmor -o /usr/share/keyrings/apptainer-ppa.gpg /tmp/apptainer.gpgkey
+rm /tmp/apptainer.gpgkey
+. /etc/os-release
+echo "deb [signed-by=/usr/share/keyrings/apptainer-ppa.gpg] https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu ${VERSION_CODENAME} main" \
+  > /etc/apt/sources.list.d/apptainer.list
+apt-get -qq update
+apt-get -qq -y upgrade
+# NOTE: apptainer-suid is intentionally not installed; use user namespaces.
+apt-get -qq -y install --no-install-recommends \
+  bash-completion \
+  apptainer \
+  squashfuse fuse2fs fuse-overlayfs
+EOR
+
+COPY files/usr/local/entrypoint.d/90-mounts.sh files/usr/local/entrypoint.d/91-fuse.sh /usr/local/entrypoint.d/
+COPY files/usr/local/bin/apptainer-oci-run /usr/local/bin/
+
+ADD https://nvidia.github.io/libnvidia-container/gpgkey libnvidia-container.gpgkey
+ADD https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Optional: provides nvidia-container-cli for `apptainer --nvccli`.
+# Ref: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#with-apt-ubuntu-debian
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked <<EOR
+# Install Nvidia Container Toolkit
+set -xeuo pipefail
+gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ./libnvidia-container.gpgkey
+sed -i 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' /etc/apt/sources.list.d/nvidia-container-toolkit.list
+apt-get -qq update
+apt-get -qq -y install --no-install-recommends \
+  nvidia-container-toolkit
+rm *.gpgkey
+EOR
+
+################################################################################
+FROM ${REGISTRY}/login:${SLURM_TAG} AS login-apptainer
+
+SHELL ["bash", "-c"]
+
+ARG APPTAINER_PPA_FINGERPRINT
+ARG DEBIAN_FRONTEND=noninteractive
+
+USER root
+
+ADD https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${APPTAINER_PPA_FINGERPRINT} /tmp/apptainer.gpgkey
+
+# Ref: https://apptainer.org/docs/admin/latest/installation.html#install-ubuntu-packages
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked <<EOR
+# Install Apptainer
+set -xeuo pipefail
+apt-get -qq update
+apt-get -qq -y install --no-install-recommends \
+  ca-certificates gpg
+gpg --dearmor -o /usr/share/keyrings/apptainer-ppa.gpg /tmp/apptainer.gpgkey
+rm /tmp/apptainer.gpgkey
+. /etc/os-release
+echo "deb [signed-by=/usr/share/keyrings/apptainer-ppa.gpg] https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu ${VERSION_CODENAME} main" \
+  > /etc/apt/sources.list.d/apptainer.list
+apt-get -qq update
+apt-get -qq -y upgrade
+# NOTE: apptainer-suid is intentionally not installed; use user namespaces.
+apt-get -qq -y install --no-install-recommends \
+  bash-completion \
+  apptainer \
+  squashfuse fuse2fs fuse-overlayfs
+EOR
+
+COPY files/usr/local/entrypoint.d/90-mounts.sh files/usr/local/entrypoint.d/91-fuse.sh /usr/local/entrypoint.d/
+
+ADD https://nvidia.github.io/libnvidia-container/gpgkey libnvidia-container.gpgkey
+ADD https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Optional: provides nvidia-container-cli for `apptainer --nvccli`.
+# Ref: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#with-apt-ubuntu-debian
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked <<EOR
+# Install Nvidia Container Toolkit
+set -xeuo pipefail
+gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ./libnvidia-container.gpgkey
+sed -i 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' /etc/apt/sources.list.d/nvidia-container-toolkit.list
+apt-get -qq update
+apt-get -qq -y install --no-install-recommends \
+  nvidia-container-toolkit
+rm *.gpgkey
+EOR
